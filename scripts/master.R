@@ -49,6 +49,7 @@ array <- lapply(names(metrics),
                   )
                 })
 #saveRDS(array, here::here("data", "array.rds"))
+array <- readRDS(here::here("data", "array.rds"))
 CrI <- lapply(array, function(x) draw_CrI(x, c(2,3)))
 
 df <- lapply(CrI, function(x) {

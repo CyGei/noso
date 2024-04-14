@@ -158,38 +158,8 @@ burnin <- 500
 
 
 # Epicurve ----------------------------------------------------------------
-
-p_epicurve <- data_list$linelist %>%
-  ggplot(aes(x = as.Date(onset_inferred), fill = group)) +
-  geom_bar(col = "grey", stat = "count") +
-  geom_vline(
-    data = get_peak(date = data_list$linelist$onset_inferred,
-                    group = data_list$linelist$group),
-    aes(xintercept = observed_peak),
-    col = "black",
-    linewidth = 2
-  )+
-  geom_vline(
-    data = get_peak(date = data_list$linelist$onset_inferred,
-                    group = data_list$linelist$group),
-    aes(xintercept = observed_peak, col = group),
-    linewidth = 1
-  )+
-  scale_fill_manual("Group", values = c("orange", "purple")) +
-  scale_color_manual("Group", values = c("orange", "purple")) +
-  scale_x_date(breaks = cutoff_dates, date_labels = "%d\n%b",
-               limits = c(min(cutoff_dates), max(cutoff_dates)+3)) +
-  labs(x = "", y = "Number of cases") +
-  theme_bw()+
-  theme(
-    legend.position = c(.01, .99),
-    legend.justification = c("left", "top"),
-    legend.box.just = "left",
-    legend.box.background  = element_rect(colour = "black")
-  )
-
-
-
+linelist = data_list$linelist
+epicurve(cutoff_dates)
 
 # Data --------------------------------------------------------------------
 cut_trees <- readRDS(here("data", "cut_trees.rds"))
@@ -250,7 +220,7 @@ p_cor <- cor %>%
     legend.box.background  = element_rect(colour = "black")
   )
 cowplot::plot_grid(
-  plotlist = list(p_cor, p_epicurve),
+  plotlist = list(p_cor, epicurve(cutoff_dates)),
   ncol = 1,
   rel_heights = c(0.5,1),
   labels="AUTO"

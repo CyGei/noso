@@ -20,6 +20,11 @@ cutoff_dates <- unique(c(seq(min(as.Date(linelist$onset_inferred)),
                          max(linelist$onset_inferred)))
 
 tree = trees[[200]]
+from = tree$from_group
+to = tree$to_group
+levels = c("hcw", "patient")
+linktree:::ttable(from, to, levels)
+
 
 mo_formula(
   from = tree$from_group,
@@ -27,7 +32,7 @@ mo_formula(
   levels = NULL,
   from_id = tree$from,
   to_id = tree$to,
-  infector = "hcw",
+  infector = "patient",
   infectee = "patient"
 )
 
@@ -39,7 +44,7 @@ draw_mo(
   args = list(
     from_id = tree$from,
     to_id = tree$to,
-    diag = TRUE
+    diag = FALSE
   )
 )
 
@@ -47,7 +52,7 @@ draw_pi(
   from = tree$from_group,
   to = tree$to_group,
   levels = c("hcw", "patient"),
-  n_samples = 4
+  n_samples = 1000
 )
 
 
@@ -55,11 +60,13 @@ draw_gamma(
   from = tree$from_group,
   to = tree$to_group,
   levels = NULL,
-  n_samples = 4,
+  n_samples = 1000,
   args = list(
-    f = c("hcw" = 0.5, "patient" = 0.5)
+    f = c("hcw" = 0.23, "patient" = 1-0.23)
   )
-)
+) %>% colMeans()
+
+
 
 draw_delta(
   from = tree$from_group,
