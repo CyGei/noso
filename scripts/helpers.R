@@ -161,9 +161,9 @@ get_trees <- function(out, ids, ...) {
 
 cut_tree_by_date <- function(tree, cutoff_date, from_date_col = "from_date", to_date_col = "to_date") {
     # Convert cutoff_date to Date object if it's not
-    if (!inherits(cutoff_date, "Date")) {
-        cutoff_date <- as.Date(cutoff_date)
-    }
+    # if (!inherits(cutoff_date, "Date")) {
+    #     cutoff_date <- as.Date(cutoff_date)
+    # }
     # Check if the provided column names exist in the tree data frame
     if (!all(c(from_date_col, to_date_col) %in% names(tree))) {
         stop("The provided column names do not exist in the tree data frame.")
@@ -192,7 +192,7 @@ cut_tree_by_date <- function(tree, cutoff_date, from_date_col = "from_date", to_
 #'
 #' @export
 get_peak <- function(date, group = NULL) {
-  require(incidence)
+  pacman::p_load(incidence)
   if (is.null(group)) {
     incid <- incidence(date)
     p <- estimate_peak(incid, n = 100, alpha = 0.05)
@@ -244,10 +244,12 @@ epicurve <- function(cutoff_dates = NULL, legend_position = "bottom") {
     scale_fill_manual("Group", values = c(hcw = "orange", patient = "purple")) +
     scale_color_manual("Group", values = c(hcw = "orange", patient = "purple")) +
     scale_x_date(breaks = cutoff_dates, date_labels = "%d\n%b") +
+    scale_y_continuous(breaks = seq(0, 50, by = 2)) +
     labs(x = "", y = "Number of cases") +
     theme_bw() +
     theme(
       legend.position = legend_position,
       legend.background = element_rect(color = "black")
+     # panel.grid.minor.y = element_blank()
     )
 }

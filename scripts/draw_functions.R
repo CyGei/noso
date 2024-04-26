@@ -130,10 +130,7 @@ draw_R0 <- function(from, to, levels = NULL, n_samples = 1000, args) {
 
 
 draw_array <- function(from_col, to_col, levels, trees, draw_function, args = list(), cutoff_dates = NULL, n_samples = 1000) {
-  if (!require(furrr)) {
-    install.packages(furrr)
-    library(furrr)
-  }
+  pacman::p_load("furrr")
   # Check inputs
   if (!is.function(draw_function)) stop("draw_function must be a function")
   if (!is.list(args)) stop("args must be a list")
@@ -151,7 +148,7 @@ draw_array <- function(from_col, to_col, levels, trees, draw_function, args = li
   }
   result <- array(NA_real_, dim = c(N, L, C, Tr), dimnames = dimnames)
 
-  plan(multisession, workers = future::availableCores() - 2)
+ # plan(multisession, workers = future::availableCores() - 10)
 
   cut_trees <- furrr::future_map(trees, function(tree) {
     if (is.null(cutoff_dates)) {

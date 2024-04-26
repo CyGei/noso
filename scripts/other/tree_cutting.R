@@ -1,28 +1,33 @@
 # This scripts aims at assessing whether truncating the trees at given dates yields different results compared to reconstructing the tree up to a given date.
-library(here)
+source(here::here("scripts", "helpers.R"))
+load_libraries()
+load_data()
 library(ape)
-library(dplyr)
 library(outbreaker2)
 
 # Parameters ---------------------------------------------------------
 distribution_list <- list(
-  serial_interval = list(mu = 3.0,
-                         sd = 4.1),
-  incubation_period = list(mu = 5.95,
-                           sd = 4.31)
+  serial_interval = list(
+    mu = 3.0,
+    sd = 4.1
+  ),
+  incubation_period = list(
+    mu = 5.95,
+    sd = 4.31
+  )
 ) %>%
   lapply(., function(x) {
-  x$cv <- x$sd / x$mu
-  x$shape_scale <- epitrix::gamma_mucv2shapescale(x$mu, x$cv)
-  x$dist <- distcrete::distcrete(
-    "gamma",
-    shape = x$shape_scale$shape,
-    scale = x$shape_scale$scale,
-    w = 0.5,
-    interval = 1
-  )
-  return(x)
-})
+    x$cv <- x$sd / x$mu
+    x$shape_scale <- epitrix::gamma_mucv2shapescale(x$mu, x$cv)
+    x$dist <- distcrete::distcrete(
+      "gamma",
+      shape = x$shape_scale$shape,
+      scale = x$shape_scale$scale,
+      w = 0.5,
+      interval = 1
+    )
+    return(x)
+  })
 
 
 # Prior -------------------------------------------------------------------
@@ -38,7 +43,7 @@ prior_list <- list(pi = list(
 config_list <- list(
   n_iter = 10000,
   sample_every = 50,
-  max_kappa = 3,# missed no cases
+  max_kappa = 3, # missed no cases
   init_kappa = 1, # number of generations before the last sampled ancestor
   move_kappa = TRUE,
   init_pi = 0.6, # 60% reporting rate
@@ -57,13 +62,13 @@ data_list <- list(
 # Reorder DNA sequences
 matching_indices <-
   match(data_list$linelist$case_id, rownames(data_list$dna))
-data_list$dna <- data_list$dna[matching_indices,]
-#Date as integer
+data_list$dna <- data_list$dna[matching_indices, ]
+# Date as integer
 data_list$linelist$onset_inferred <-
   as.Date(data_list$linelist$onset_inferred, format = "%Y-%m-%d")
 data_list$linelist$date_integer <-
   as.integer(difftime(
-    data_list$linelist$onset_inferred ,
+    data_list$linelist$onset_inferred,
     min(data_list$linelist$onset_inferred),
     units = "days"
   ))
@@ -88,9 +93,10 @@ o2_data <- outbreaker_data(
 # TREE CUTTING
 ############################################################################
 # In the below we 1st run the tree on the entire dataset and then we cut the tree at different dates
-
-source(here("scripts", "helpers.R"))
-cutoff_dates <- seq(as.Date("2020-03-05"), as.Date("2020-05-06"), by = 7)
+cutoff_dates <- unique(c(seq(min(as.Date(linelist$onset_inferred)),
+                             max(as.Date(linelist$onset_inferred)),
+                             by = 7),
+                         max(linelist$onset_inferred)))
 burnin <- 500
 
 # Whole Run ---------------------------------------------------------
@@ -154,232 +160,196 @@ burnin <- 500
 #                          date = o2_data_cut$dates)
 #   return(trees_cut)
 # })
-#saveRDS(reconstructed_cut_trees, here("data", "reconstructed_cut_trees.rds"))
+# saveRDS(reconstructed_cut_trees, here("data", "reconstructed_cut_trees.rds"))
 
 
 # Epicurve ----------------------------------------------------------------
-linelist = data_list$linelist
+linelist <- data_list$linelist
 epicurve(cutoff_dates)
 
 # Data --------------------------------------------------------------------
 cut_trees <- readRDS(here("data", "cut_trees.rds"))
-reconstructed_cut_trees <- readRDS(here("data", "reconstructed_cut_trees.rds"))
-listx <-  lapply(cut_trees[-1], \(x) bind_rows(x) %>% select(from, to))
-listy <-  lapply(reconstructed_cut_trees[-1], \(x) bind_rows(x) %>% select(from, to))
+reconstructed_cut_trees <- readRDS(here("data", "reconstructed_cut_trees.rds")) # [-1]
 
-
-# cor.test method ---------------------------------------------------------
-
-get_cor.test <- function(A, B, method = "pearson") {
-  tabA <- linktree:::ttable(
-    from = A$from,
-    to = A$to,
+# chi-square method -------------------------------------------------------
+get_chi.test <- function(x, y) {
+  if(is.null(x)) {
+    x <- data.frame(from = character(0), to = character(0))
+  }
+  if(is.null(y)) {
+    y <- data.frame(from = character(0), to = character(0))
+  }
+  tabx <- linktree:::ttable(
+    from = x$from,
+    to = x$to,
     levels = data_list$linelist$case_id
   ) %>%
     as.data.frame() %>%
     select(from, to, Freq) %>%
     rename(Freq_x = Freq)
-  tabB <- linktree:::ttable(
-    from = B$from,
-    to = B$to,
+  taby <- linktree:::ttable(
+    from = y$from,
+    to = y$to,
     levels = data_list$linelist$case_id
   ) %>%
     as.data.frame() %>%
     select(from, to, Freq) %>%
     rename(Freq_y = Freq)
-  tab <- merge(tabA, tabB, by = c("from", "to")) %>%
-    filter(from != to)
+  tab <- merge(tabx, taby, by = c("from", "to")) %>%
+    filter(from != to) %>%
+    filter(!(Freq_x == 0 & Freq_y == 0)) %>%
+    select(Freq_x, Freq_y)
 
-  test <- cor.test(tab$Freq_x, tab$Freq_y, method = method)
-
-  return(data.frame(estimate = test$estimate,
-                    p.value = test$p.value,
-                    lower = test$conf.int[1],
-                    upper = test$conf.int[2],
-                    row.names = NULL))
-}
-
-cor <- lapply(1:length(listx), \(i) get_cor.test(listx[[i]], listy[[i]])) %>%
-  bind_rows() %>%
-  mutate(cutoff_date = cutoff_dates[-1])
-
-p_cor <- cor %>%
-  ggplot() +
-  aes(x = cutoff_date,
-      y = estimate) +
-  geom_pointrange(aes(ymin = lower, ymax = upper)) +
-  scale_x_date(breaks = cutoff_dates, date_labels = "%d\n%b",
-               limits = c(min(cutoff_dates), max(cutoff_dates)+3)) +
-  labs(x = "",
-       y = "Correlation Test") +
-  theme_bw()+
-  theme(
-    legend.position = c(.01, .99),
-    legend.justification = c("left", "top"),
-    legend.box.just = "left",
-    legend.box.background  = element_rect(colour = "black")
+  tryCatch(
+    {
+      if (nrow(tab) <= 5) {
+        test <- stats::fisher.test(tab)$p.value
+      } else {
+        test <- chisq.test(tab)$p.value
+      }
+      return(test)
+    },
+    error = function(e) {
+      return(NA)
+    }
   )
-cowplot::plot_grid(
-  plotlist = list(p_cor, epicurve(cutoff_dates)),
-  ncol = 1,
-  rel_heights = c(0.5,1),
-  labels="AUTO"
+}
+#@thibaut: ramener a une frequence d'ancestries
+get_chi.test(x = bind_rows(reconstructed_cut_trees[[10]]),
+             y = bind_rows(cut_trees[[10]])
 )
-
-# Jaccard Similarity --------------------------------------------------------------
-#pmin_table: Contains the minimum number of transmissions between pairs of individuals that both trees agree on.
-#pmax_table: Contains the maximum number of transmissions between pairs of individuals considering all transmissions recorded in both trees.
-#Jaccard similarity coefficient:
-jaccard <- function(A, B, levels = NULL) {
-  # Compute tables from dataframes
-  tabA <- linktree:::ttable(A$from, A$to, levels)
-  tabB <- linktree:::ttable(B$from, B$to, levels)
-  return(sum(pmin(tabA, tabB)) / sum(pmax(tabA, tabB)))
-}
-
-# Monte Carlo function
-mc_jaccard <- function(A, B, levels = NULL, n = 999) {
-
-  data <- rbind(A, B)
-  data$set <- c(rep("A", nrow(A)), rep("B", nrow(B)))
-
-  #reshuffle the set membership using sample()
-  jaccard_values <- replicate(n, {
-    data$set <- sample(data$set, replace = FALSE)
-    jaccard(A = data[data$set == "A", ], B = data[data$set == "B", ],
-            levels = levels)
-  })
-  return(jaccard_values)
-}
+# chidf <- furrr::future_map(2:length(cutoff_dates), function(i) {
+#   data.frame(
+#     cutoff_date = cutoff_dates[i],
+#     p_value = get_chi.test(x = bind_rows(cut_trees[[i]]),
+#                            y = bind_rows(reconstructed_cut_trees[[i]]))
+#   )
+# }) %>%
+#   bind_rows() #!returns signficant p-values! @thibaut?
 
 library(furrr)
-plan(multisession, workers = length(listx))
-set.seed(123)
-null_jaccard <- future_map2(listx, listy, \(x, y) mc_jaccard(x, y, levels = data_list$linelist$case_id, n = 999),
-                              .options = furrr_options(seed = TRUE))
-plan(sequential)
-est_jaccard<- lapply(1:length(listx), function(i){
-  jaccard(listx[[i]], listy[[i]], levels = data_list$linelist$case_id)
-})
+plan(multisession, workers = 10)
 
-# Proportion of null Jaccard values that are greater than or equal to the estimated Jaccard value.
-p_values <- lapply(1:length(est_jaccard), function(i) {
-  mean(null_jaccard[[i]] >= est_jaccard[[i]])
-}) %>% unlist() %>%
-  data.frame(cutoff_date = cutoff_dates[-1], p_value = round(., 3))
-
-
-# make a dataframe with cutoff, type (est vs null) and jaccard
-jaccard_df <- bind_rows(
-  data.frame(cutoff_date = cutoff_dates[-1], jaccard = unlist(est_jaccard), type = "est"),
-  data.frame(cutoff_date = cutoff_dates[-1], jaccard = unlist(null_jaccard), type = "null")
-)
-
-p_jaccard <- ggplot() +
-  aes(x = cutoff_date,
-      y = jaccard,
-      group = interaction(type, cutoff_date)) +
-  gghalves::geom_half_violin(data = jaccard_df %>% filter(type == "null"),
-                             aes(col = "null"), fill = "#cdcdcd", col = NA) +
-  gghalves::geom_half_boxplot(data = jaccard_df %>% filter(type == "null"),
-                              width = 0.5,
-                              side = "r") +
-  geom_point(data = jaccard_df %>% filter(type == "est"),
-             aes(col = "est"), size = 3) +
-  geom_label(data = p_values,
-            aes(label = paste0("p = ", p_value),
-                group = cutoff_date,
-                x = cutoff_date,
-                y = 0.6)) +
-  scale_x_date(breaks = cutoff_dates, date_labels = "%d\n%b",
-               limits = c(min(cutoff_dates), max(cutoff_dates)+3)) +
-  scale_color_manual(values = c("null" = "#3b3b3b", "est" = "red")) +
-  labs(x = "",
-       y = "Jaccard Similarity") +
-  theme_bw()+
-  theme(
-    legend.position = c(.01, .99),
-    legend.justification = c("left", "top"),
-    legend.box.just = "left",
-    legend.box.background  = element_rect(colour = "black")
-  )
-
-#70% of the counts of the elements in the two sets overlap
-
-cowplot::plot_grid(
-  plotlist = list(p_jaccard, p_epicurve),
-  ncol = 1,
-  rel_heights = c(0.5,1),
-  labels="AUTO"
-)
-
-# Compute Negative SIs ----------------------------------------------------
-
-six <-  lapply(cut_trees[-1], \(x) bind_rows(x) %>%
-                   mutate(serial_interval = to_date - from_date,
-                          serial_interval = as.integer(serial_interval)) %>%
-                   select(serial_interval))
-siy <-  lapply(reconstructed_cut_trees[-1], \(x) bind_rows(x) %>%
-                   mutate(serial_interval = to_date - from_date,
-                          serial_interval = as.integer(serial_interval)) %>%
-                   select(serial_interval))
-
-si <- lapply(1:length(six), function(i){
-  bind_rows(six[[i]] %>% mutate(set = "x"),
-            siy[[i]] %>% mutate(set = "y")) %>%
-    mutate(cut_date = cutoff_dates[i+1])
+#chisq at the sample level
+chidf <- furrr::future_map(2:length(cutoff_dates), function(i) {
+  lapply(1:190, function(j) {
+    data.frame(
+      cutoff_date = cutoff_dates[i],
+      p_value = get_chi.test(x = cut_trees[[i]][[j]],
+                             y = reconstructed_cut_trees[[i]][[j]]),
+      sim = j
+    )
+  })
 }) %>%
   bind_rows()
 
-library(gghalves)
-p_si <- ggplot() +
-  aes(
-    x = cut_date,
-    y = serial_interval ,
-    #fill = set,
-    col = set,
-    split = set,
-    group = interaction(set, cut_date)
-  )+
-  gghalves::geom_half_boxplot(
-    data = si %>% filter(set == "x"),
-    side = "r",
-    outlier.shape = NA
-  )+
-  gghalves::geom_half_boxplot(
-    data = si %>% filter(set == "y"),
-    side = "l",
-    outlier.shape = NA
-  )+
-  # gghalves::geom_half_dotplot(
-  #   method = "histodot",
-  #   position = "identity",
-  #   stackratio = 0.5,
-  #   binwidth = 1,
-  #   dotsize = 0.01,
-  #   alpha = 0.5
-  # )+
-  # gghalves::geom_half_violin(aes(split = set),
-  #                            nudge = -1.2,
-  #                            side = c("l", "r")) +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  scale_x_date(breaks = cutoff_dates, date_labels = "%d\n%b",
-               limits = c(min(cutoff_dates), max(cutoff_dates)+3))+
-  coord_cartesian()+
-  theme_bw() +
-  theme(
-    legend.position = c(.01, .99),
-    legend.justification = c("left", "top"),
-    legend.box.just = "left",
-    legend.box.background  = element_rect(colour = "black")
-  )
 
-cowplot::plot_grid(
-  plotlist = list(p_si, p_epicurve),
-  ncol = 1,
-  rel_heights = c(1,1),
-  labels="AUTO"
+# compare any random posterior sample in each set 50 times
+chidf <- furrr::future_map(2:length(cutoff_dates), function(i) {
+  lapply(1:50, function(j) {
+    sample <- sample(1:190, 2, replace = TRUE) #190 is length of the posterior samples
+    data.frame(
+      cutoff_date = cutoff_dates[i],
+      p_value = get_chi.test(x = cut_trees[[i]][[sample[1]]],
+                             y = reconstructed_cut_trees[[i]][[sample[2]]])
+    )
+  })
+}) %>%
+  bind_rows()
+
+
+p_chi <- chidf %>%
+  ggplot(aes(x = as.factor(cutoff_date), y = p_value)) +
+  geom_violin() +
+  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  scale_x_discrete(
+    limits = as.factor(cutoff_dates),
+    breaks = as.factor(cutoff_dates),
+    labels = format(cutoff_dates, "%d\n%b")) +
+  scale_y_log10() +
+  theme_bw() +
+  labs(x = "",
+       y = "chi-square test p-value")
+
+cowplot::plot_grid(p_chi, epicurve(), nrow = 2)
+
+
+
+get_chi.test(x = bind_rows(reconstructed_cut_trees[[10]][[1]]),
+             y = bind_rows(reconstructed_cut_trees[[10]][[10]])
 )
+
+# Compute Negative SIs ----------------------------------------------------
+#
+# six <- lapply(cut_trees[-1], \(x) bind_rows(x) %>%
+#   mutate(
+#     serial_interval = to_date - from_date,
+#     serial_interval = as.integer(serial_interval)
+#   ) %>%
+#   select(serial_interval))
+# siy <- lapply(reconstructed_cut_trees[-1], \(x) bind_rows(x) %>%
+#   mutate(
+#     serial_interval = to_date - from_date,
+#     serial_interval = as.integer(serial_interval)
+#   ) %>%
+#   select(serial_interval))
+#
+# si <- lapply(1:length(six), function(i) {
+#   bind_rows(
+#     six[[i]] %>% mutate(set = "x"),
+#     siy[[i]] %>% mutate(set = "y")
+#   ) %>%
+#     mutate(cut_date = cutoff_dates[i + 1])
+# }) %>%
+#   bind_rows()
+#
+# library(gghalves)
+# p_si <- ggplot() +
+#   aes(
+#     x = cut_date,
+#     y = serial_interval,
+#     # fill = set,
+#     col = set,
+#     split = set,
+#     group = interaction(set, cut_date)
+#   ) +
+#   gghalves::geom_half_boxplot(
+#     data = si %>% filter(set == "x"),
+#     side = "r",
+#     outlier.shape = NA
+#   ) +
+#   gghalves::geom_half_boxplot(
+#     data = si %>% filter(set == "y"),
+#     side = "l",
+#     outlier.shape = NA
+#   ) +
+#   # gghalves::geom_half_dotplot(
+#   #   method = "histodot",
+#   #   position = "identity",
+#   #   stackratio = 0.5,
+#   #   binwidth = 1,
+#   #   dotsize = 0.01,
+#   #   alpha = 0.5
+#   # )+
+#   # gghalves::geom_half_violin(aes(split = set),
+#   #                            nudge = -1.2,
+#   #                            side = c("l", "r")) +
+#   geom_hline(yintercept = 0, lty = "dashed") +
+#   scale_x_date(
+#     breaks = cutoff_dates, date_labels = "%d\n%b",
+#     limits = c(min(cutoff_dates), max(cutoff_dates) + 3)
+#   ) +
+#   coord_cartesian() +
+#   theme_bw() +
+#   theme(
+#     legend.position = c(.01, .99),
+#     legend.justification = c("left", "top"),
+#     legend.box.just = "left",
+#     legend.box.background = element_rect(colour = "black")
+#   )
+#
+# cowplot::plot_grid(p_si, epicurve(), nrow = 2)
+
 
 #
 # si <- lapply(1:length(six), function(i){
@@ -412,3 +382,119 @@ cowplot::plot_grid(
 #   labs(x = "",
 #        y = "Serial Interval (days)")
 # p_si
+
+
+
+
+
+
+
+
+
+
+
+# Jaccard Similarity --------------------------------------------------------------
+# pmin_table: Contains the minimum number of transmissions between pairs of individuals that both trees agree on.
+# pmax_table: Contains the maximum number of transmissions between pairs of individuals considering all transmissions recorded in both trees.
+# Jaccard similarity coefficient:
+# jaccard <- function(A, B, levels = NULL) {
+#   # Compute tables from dataframes
+#   tabA <- linktree:::ttable(A$from, A$to, levels)
+#   tabB <- linktree:::ttable(B$from, B$to, levels)
+#   return(sum(pmin(tabA, tabB)) / sum(pmax(tabA, tabB)))
+# }
+#
+# # Monte Carlo function
+# mc_jaccard <- function(A, B, levels = NULL, n = 999) {
+#   data <- rbind(A, B)
+#   data$set <- c(rep("A", nrow(A)), rep("B", nrow(B)))
+#
+#   # reshuffle the set membership using sample()
+#   jaccard_values <- replicate(n, {
+#     data$set <- sample(data$set, replace = FALSE)
+#     jaccard(
+#       A = data[data$set == "A", ], B = data[data$set == "B", ],
+#       levels = levels
+#     )
+#   })
+#   return(jaccard_values)
+# }
+#
+# library(furrr)
+# plan(multisession, workers = length(listx))
+# set.seed(123)
+# null_jaccard <- future_map2(listx, listy, \(x, y) mc_jaccard(x, y, levels = data_list$linelist$case_id, n = 999),
+#                             .options = furrr_options(seed = TRUE)
+# )
+# plan(sequential)
+# est_jaccard <- lapply(1:length(listx), function(i) {
+#   jaccard(listx[[i]], listy[[i]], levels = data_list$linelist$case_id)
+# })
+#
+# # Proportion of null Jaccard values that are greater than or equal to the estimated Jaccard value.
+# p_values <- lapply(1:length(est_jaccard), function(i) {
+#   mean(null_jaccard[[i]] >= est_jaccard[[i]])
+# }) %>%
+#   unlist() %>%
+#   data.frame(cutoff_date = cutoff_dates[-1], p_value = round(., 3))
+#
+#
+# # make a dataframe with cutoff, type (est vs null) and jaccard
+# jaccard_df <- bind_rows(
+#   data.frame(cutoff_date = cutoff_dates[-1], jaccard = unlist(est_jaccard), type = "est"),
+#   data.frame(cutoff_date = cutoff_dates[-1], jaccard = unlist(null_jaccard), type = "null")
+# )
+#
+# p_jaccard <- ggplot() +
+#   aes(
+#     x = cutoff_date,
+#     y = jaccard,
+#     group = interaction(type, cutoff_date)
+#   ) +
+#   gghalves::geom_half_violin(
+#     data = jaccard_df %>% filter(type == "null"),
+#     aes(col = "null"), fill = "#cdcdcd", col = NA
+#   ) +
+#   gghalves::geom_half_boxplot(
+#     data = jaccard_df %>% filter(type == "null"),
+#     width = 0.5,
+#     side = "r"
+#   ) +
+#   geom_point(
+#     data = jaccard_df %>% filter(type == "est"),
+#     aes(col = "est"), size = 3
+#   ) +
+#   geom_label(
+#     data = p_values,
+#     aes(
+#       label = paste0("p = ", p_value),
+#       group = cutoff_date,
+#       x = cutoff_date,
+#       y = 0.6
+#     )
+#   ) +
+#   scale_x_date(
+#     breaks = cutoff_dates, date_labels = "%d\n%b",
+#     limits = c(min(cutoff_dates), max(cutoff_dates) + 3)
+#   ) +
+#   scale_color_manual(values = c("null" = "#3b3b3b", "est" = "red")) +
+#   labs(
+#     x = "",
+#     y = "Jaccard Similarity"
+#   ) +
+#   theme_bw() +
+#   theme(
+#     legend.position = c(.01, .99),
+#     legend.justification = c("left", "top"),
+#     legend.box.just = "left",
+#     legend.box.background = element_rect(colour = "black")
+#   )
+#
+# # 70% of the counts of the elements in the two sets overlap
+#
+# cowplot::plot_grid(
+#   plotlist = list(p_jaccard, p_epicurve),
+#   ncol = 1,
+#   rel_heights = c(0.5, 1),
+#   labels = "AUTO"
+# )
