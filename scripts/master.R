@@ -39,7 +39,7 @@ array <- lapply(names(metrics),
                     trees = trees,
                     draw_function = metrics[[metric_name]],
                     args = list(
-                      f = c("hcw" = 0.5, "patient" = 0.5),
+                      f = c("hcw" = 0.23, "patient" = 0.77),
                       from_id = "from",
                       to_id = "to",
                       diag = TRUE
