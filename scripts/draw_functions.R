@@ -178,7 +178,7 @@ draw_array <- function(from_col, to_col, levels, trees, draw_function, args = li
                       },
                       .options = furrr::furrr_options(seed = TRUE)
     )
-  plan(sequential)
+  #plan(sequential)
   result[] <- unlist(draw_results)
 
   return(result)

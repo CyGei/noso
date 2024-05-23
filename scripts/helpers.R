@@ -9,17 +9,27 @@ load_libraries <- function() {
     pacman::p_load(
         here,
         outbreaker2,
-        tidyverse
+        tidyverse,
+        furrr
     )
     pacman::p_load_gh("CyGei/linktree")
 }
 
-load_data <- function(){
-    linelist <- read.csv(here("data", "linelist.csv"))
-    outbreaker_chains <- read.csv(here("data", "main_model_output.csv"))
-    class(outbreaker_chains) <- c("outbreaker_chains", "data.frame")
+load_data <- function(data_path) {
+    linelist <- readRDS(here::here(data_path, "linelist.rds"))
+    out <- readRDS(here::here(data_path, "out.rds"))
+    class(out) <- c("outbreaker_chains", "data.frame")
+    cutoff_dates <- unique(c(
+        seq(min(linelist$onset) + 7,
+            max(linelist$onset),
+            by = 7
+        ),
+        max(linelist$onset)
+    ))
+
     assign("linelist", linelist, envir = .GlobalEnv)
-    assign("outbreaker_chains", outbreaker_chains, envir = .GlobalEnv)
+    assign("out", out, envir = .GlobalEnv)
+    assign("cutoff_dates", cutoff_dates, envir = .GlobalEnv)
 }
 
 load_draw_functions <- function() {
@@ -79,8 +89,8 @@ filter_alpha_by_kappa <- function(out, kappa_threshold) {
     if (!is.data.frame(out)) {
         stop("The 'out' argument must be an outbreaker2 data frame.")
     }
-    if (!is.numeric(kappa_threshold) || length(kappa_threshold) != 1) {
-        stop("The 'kappa_threshold' argument must be a single numeric value.")
+    if (!is.integer(kappa_threshold) || length(kappa_threshold) != 1) {
+        stop("The 'kappa_threshold' argument must be a single integer value.")
     }
 
     alpha_cols <- grep("^alpha_", names(out), value = TRUE)
@@ -133,9 +143,8 @@ get_trees <- function(out, ids, ...) {
 
     # Create a list of data frames, each with 'from' and 'to' columns
     tree_list <- lapply(seq_len(nrow(out)), function(i) {
-
         from <- unlist(out[i, ], use.names = FALSE)
-        if(is.integer(from)){
+        if (is.integer(from)) {
             to <- as.integer(to)
         }
 
@@ -171,8 +180,8 @@ cut_tree_by_date <- function(tree, cutoff_date, from_date_col = "from_date", to_
 
     # Filter-out rows where either from_date or to_date is NA or greater than the cutoff_date
     tree_filtered <- tree[!(is.na(tree[[from_date_col]]) | is.na(tree[[to_date_col]]) |
-                            tree[[from_date_col]] > cutoff_date |
-                            tree[[to_date_col]] > cutoff_date), ]
+        tree[[from_date_col]] > cutoff_date |
+        tree[[to_date_col]] > cutoff_date), ]
     return(tree_filtered)
 }
 
@@ -192,64 +201,152 @@ cut_tree_by_date <- function(tree, cutoff_date, from_date_col = "from_date", to_
 #'
 #' @export
 get_peak <- function(date, group = NULL) {
-  pacman::p_load(incidence)
-  if (is.null(group)) {
-    incid <- incidence(date)
-    p <- estimate_peak(incid, n = 100, alpha = 0.05)
-    result <- data.frame(group = NA, observed_peak = p$observed)
-  } else {
-    data <- tibble(date = date, group = group)
-    result <- lapply(unique(group), function(g) {
-      g_data <- data[data$group == g, ]
-      incid <- incidence(g_data$date)
-      p <- estimate_peak(incid, n = 100, alpha = 0.05)
-      data.frame(group = g, observed_peak = p$observed)
-    })
-    result <- do.call(rbind, result)
-  }
-  return(result)
+    pacman::p_load(incidence)
+    if (is.null(group)) {
+        incid <- incidence(date)
+        p <- estimate_peak(incid, n = 100, alpha = 0.05)
+        result <- data.frame(group = NA, observed_peak = p$observed)
+    } else {
+        data <- tibble(date = date, group = group)
+        result <- lapply(unique(group), function(g) {
+            g_data <- data[data$group == g, ]
+            incid <- incidence(g_data$date)
+            p <- estimate_peak(incid, n = 100, alpha = 0.05)
+            data.frame(group = g, observed_peak = p$observed)
+        })
+        result <- do.call(rbind, result)
+    }
+    return(result)
+}
+
+
+#computes pi from gamma and f
+get_pi <- function(gamma, f){
+  numerator = gamma * f
+  denominator = 1 - f + gamma * f
+  return(numerator / denominator)
+}
+
+# GGPLOT ------------------------------------------------------------------
+
+theme_noso <- function(fill = TRUE, col = TRUE, date = TRUE, legend_position = "bottom") {
+    list(
+        theme(
+            strip.background = element_rect(colour = "black",
+                                            fill = "#EEEEEE",
+                                            linewidth = 1.2),
+            strip.text = element_text(size = 12,
+                                      colour = "black",
+                                      face = "bold"),
+            panel.border = element_rect(colour = "black", fill=NA, size=0.5),
+            panel.background = element_rect(fill = "white"),
+            panel.grid.major = element_line(linewidth = 0.3, color = "grey"),
+            panel.grid.minor = element_line(linewidth = 0.075, color = "grey"),
+            axis.line = element_line(linewidth = 0.6, color = "black"),
+            legend.position = legend_position,
+            text = element_text(size = 14)
+        ),
+        if (fill) {
+            scale_fill_manual(
+                values = c(hcw = "#FF9300", patient = "purple"),
+                labels = c("HCW", "Patient")
+            )
+        },
+        if (col) {
+            scale_color_manual(
+                values = c(hcw = "#FF9300", patient = "purple"),
+                labels = c("HCW", "Patient")
+            )
+        },
+        if (date) {
+          cutoff_dates <-
+            unique(
+              c(
+                min(linelist$onset),
+                cutoff_dates,
+                max(linelist$onset)
+              )
+            )
+            day_month <- format(cutoff_dates, "%d\n%B")
+            day <- format(cutoff_dates, "%d")
+            dup <- which(duplicated(format(cutoff_dates, "%b")))
+            day_month[dup] <- day[dup]
+            scale_x_date(
+                limits = c(min(linelist$onset), max(linelist$onset)) + 0.75,
+                breaks = cutoff_dates,
+                labels = day_month
+            )
+        }
+    )
 }
 
 
 
+# epicurve
+epicurve <- function(legend_position = "bottom") {
+    cutoff_dates <-
+        unique(
+            c(
+                min(linelist$onset),
+                cutoff_dates,
+                max(linelist$onset)
+            )
+        )
 
-
-# GGPLOT ------------------------------------------------------------------
-
-#epicurve
-epicurve <- function(cutoff_dates = NULL, legend_position = "bottom") {
-  if (is.null(cutoff_dates)) {
-    cutoff_dates <- unique(c(seq(min(as.Date(linelist$onset_inferred)),
-                                 max(as.Date(linelist$onset_inferred)),
-                                 by = 7),
-                             max(linelist$onset_inferred)))
-  }
-
-  linelist %>%
-    ggplot(aes(x = as.Date(onset_inferred), fill = group)) +
-    geom_bar(col = "grey", stat = "count") +
-    geom_vline(
-      data = get_peak(date = linelist$onset_inferred,
-                      group = linelist$group),
-      aes(xintercept = observed_peak),
-      col = "black",
-      linewidth = 2
-    ) +
-    geom_vline(
-      data = get_peak(date = linelist$onset_inferred,
-                      group = linelist$group),
-      aes(xintercept = observed_peak, col = group),
-      linewidth = 1
-    ) +
-    scale_fill_manual("Group", values = c(hcw = "orange", patient = "purple")) +
-    scale_color_manual("Group", values = c(hcw = "orange", patient = "purple")) +
-    scale_x_date(breaks = cutoff_dates, date_labels = "%d\n%b") +
-    scale_y_continuous(breaks = seq(0, 50, by = 2)) +
-    labs(x = "", y = "Number of cases") +
-    theme_bw() +
-    theme(
-      legend.position = legend_position,
-      legend.background = element_rect(color = "black")
-     # panel.grid.minor.y = element_blank()
-    )
+    linelist %>%
+        mutate(col = as.character(row_number())) %>%
+        group_by(group, onset, col) %>%
+        summarise(n = n()) %>%
+        ggplot(aes(
+            x = as.Date(onset),
+            y = n,
+            fill = group
+        )) +
+        geom_col(
+            col = "black",
+            linewidth = 0.35
+        ) +
+        geom_segment(
+            data = get_peak(date = linelist$onset, group = linelist$group),
+            aes(
+                x = observed_peak,
+                y = c(10, 10),
+                xend = observed_peak,
+                yend = c(7, 8),
+                linetype = "Peak"
+            ),
+            col = "black",
+            linewidth = 1.3,
+            lineend = "round",
+            linejoin = "bevel",
+            arrow = arrow(length = unit(0.5, "cm"))
+        ) +
+        geom_segment(
+            data = get_peak(date = linelist$onset, group = linelist$group),
+            aes(
+                x = observed_peak,
+                y = c(10, 10),
+                xend = observed_peak,
+                yend = c(7, 8),
+                col = group
+            ),
+            show.legend = FALSE,
+            linewidth = 1,
+            lineend = "round",
+            linejoin = "bevel",
+            arrow = arrow(length = unit(0.5, "cm"))
+        ) +
+        scale_y_continuous(breaks = seq(0, 50, by = 2)) +
+        labs(
+            x = "Date of onset", y = "Cases",
+            fill = "", col = "", linetype = ""
+        ) +
+        theme(
+            legend.position = legend_position,
+            legend.background = element_rect(color = "black")
+        ) +
+        guides(linetype = guide_legend(
+            override.aes = list(linewidth = 0.5)
+        )) +
+        theme_noso()
 }

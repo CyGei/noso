@@ -1,0 +1,41 @@
+Assessing the impact of tree truncation on outbreak.
+
+Our paper investigates the evolution of the assortativity coefficient δ at various timepoints during an outbreak. The primary objective of the analysis below is to examine whether truncating the reconstructed posterior trees up to a given date, as opposed to re-running outbreaker2 with filtered data up to each cutoff date, yields significantly different infector-infectee pairs. 
+If there is no significant difference between the two methods then we could use the complete tree and truncate it for our ‘real-time’ analysis of δ. Else we may have to re-run outbreaker2 at every cutoff date.
+The methodology employed is as follows:
+
+A) “Retrospective” Analysis:
+Outbreaker2 is run on the complete dataset (i.e. linelist, dna and contact data). The resulting posterior transmission trees are then truncated at different cutoff dates by removing any transmission pair where either the infectee or the infector reports a symptom onset date past the cutoff date.
+
+B) “Realtime” Analysis
+Outbreaker2 is run on subsets of the dataset filtered up to the corresponding cutoff dates, i.e. we exclude any case in the linelist that reports symptom onset past the cutoff date.
+Statistical Analysis
+For a given cutoff date, we compared the frequencies of ancestries from the two sets of posterior chains (Set A from the retrospective analysis and Set B from the subset analysis).
+
+
+0 - helpers.R
+Contains functions to load the data (loadbreaker), run outbreaker2 in parallel (furrrbreaker) and use the
+chi-square test to compare the ancestry frequencies of two sets of posterior chains (get_chisq).
+
+
+1 - convergence.R
+Runs outbreaker2 100 times. Assesses that all MCMC chains have converged.
+
+2 - assess_chisq.R
+Assesses that the chi-square test is appropriate for the data.
+
+2 - tree_sets.R
+Creates two sets of transmission chains.
+trunc_trees:
+Outbreaker2 is run on the complete dataset (i.e. linelist, dna and contact data). The resulting posterior transmission trees are then truncated at different cutoff dates by removing any transmission pair where either the infectee or the infector reports a symptom onset date past the cutoff date.
+
+realtime_trees:
+Outbreaker2 is run on subsets of the dataset filtered up to the corresponding cutoff dates, i.e. we exclude any case in the linelist that reports symptom onset past the cutoff date.
+
+3 - test_sets.R
+For any cutoff date, we use the chi-square test to compare the ancestry frequencies of the two sets of posterior chains.
+We found that the two sets of transmission chains are significantly different around the peak.
+We suspect that the difference is due to the high % of negative serial intervals. In the presence of negative serial intervals, the reconstruction of the transmission tree may be affected given that the infector reports a symptom onset date after the infectee (past the cutoff).
+
+4 - SI.R
+We construct the cumulative distribution function of the serial interval and assess the proportion of negative serial intervals.
