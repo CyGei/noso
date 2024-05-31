@@ -1,24 +1,33 @@
 # Re.R gave the estimates for the basic reproduciton number as follow:
+#2020
+# Global R0 = 1.5
+# Patient R0 = 1.25
+# HCW R0 = 1.75
+
+#2021
 # Global R0 = 1.36
 # Patient R0 = 1.61
 # HCW R0 = 1.29
 source(here::here("scripts", "helpers.R"))
 load_libraries()
-load_data()
-outbreaker_chains <- outbreaker_chains %>%
+paper <- c("JHI2021", "eLife2022")[1]
+input_path <- here::here("data", paper, "input/")
+load_data(input_path)
+out <- out %>%
   filter(step > 500) %>%
   identify(ids = linelist$case_id)
-outbreaker_chains <- filter_alpha_by_kappa(outbreaker_chains, 1)
+out <- filter_alpha_by_kappa(out, 1L)
 
 trees <- get_trees(
-  out = outbreaker_chains,
+  out = out,
   ids = linelist$case_id,
   group = linelist$group,
-  date = linelist$onset_inferred
+  date = linelist$onset
 )
-cutoff_date = cutoff_dates[2]
+
+cutoff_date = cutoff_dates[3]
 cut_linelist <- linelist %>%
-  filter(onset_inferred <= cutoff_date)
+  filter(onset <= cutoff_date)
 gammaf <- data.frame(
   fHCW = c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
   hcw = c(33.77, 15.13, 8.90, 5.79, 3.91, 2.65, 1.74, 1.05, 0.49),
@@ -27,7 +36,7 @@ gammaf <- data.frame(
 cases <- table(cut_linelist$group)
 trueR0 <- data.frame(
   level = c("hcw", "patient"),
-  R0 = c(1.29, 1.61)
+  R0 = c(1.75, 1.25)
 )
 
 

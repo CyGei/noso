@@ -17,11 +17,10 @@ trees <- get_trees(
   group = linelist$group,
   date = linelist$onset
 )
-cat(as.character(cutoff_dates), sep = "\n")
 epicurve()
-
 metrics <- list("delta" = draw_delta,
-                "Mo" = draw_mo)
+                "rho" = draw_rho)
+
 pacman::p_load(furrr)
 future::plan(list(
   future::tweak(future::multisession, workers = length(metrics)),
@@ -30,7 +29,7 @@ future::plan(list(
     workers = future::availableCores() - (length(metrics) + 2)
   )
 ))
-fHCW <- 0.3
+fHCW <- 0.33
 set.seed(123)
 system.time({
   array <- furrr::future_map(names(metrics), function(metric_name) {
@@ -47,7 +46,7 @@ system.time({
         diag = TRUE
       ),
       cutoff_dates = cutoff_dates,
-      n_samples = ifelse(metric_name == "Mo", 1, 1000)
+      n_samples = ifelse(metric_name == "rho", 1, 1000)
     )
   }, .options = furrr_options(
     seed = TRUE,
@@ -65,9 +64,9 @@ system.time({
 saveRDS(array, here::here(output_path, "array.rds"))
 array <- readRDS(here::here(output_path, "array.rds"))
 
-#rescale Mo values with gamma2delta()
-mo_idx <- which(names(metrics) == "Mo")
-array[[mo_idx]] <- apply(array[[mo_idx]], 1:4, gamma2delta)
+#rescale rho values with gamma2delta()
+rho_idx <- which(names(metrics) == "rho")
+array[[rho_idx]] <- apply(array[[rho_idx]], 1:4, gamma2delta)
 
 CrI <- lapply(array, function(x)
   draw_CrI(x, c(2, 3)))
@@ -87,11 +86,15 @@ df <- lapply(CrI, function(x) {
     target = case_when(
       metric == "gamma" ~ 1,
       metric == "delta" ~ 0,
-      metric == "Mo" ~ 0,
+      metric == "rho" ~ 0,
       metric == "R0" ~ 1
     )
   )
-
+df %>%
+  mutate(cutoff = as.Date(cutoff)) %>%
+  arrange(cutoff) %>%
+  mutate(across(where(is.numeric), \(x) round(x, 2))) %>%
+  print(n = 20)
 
 p_metrics <- ggplot(df, aes(
   x = as.Date(cutoff),
@@ -109,7 +112,7 @@ p_metrics <- ggplot(df, aes(
     y = list(
       metric == "delta" ~ scale_y_continuous(limit = c(-1, 1), breaks = seq(-1, 1, 0.5)),
       metric == "gamma" ~ scale_y_continuous(limit = c(0, 5), breaks = seq(0, 20, 1)),
-      metric == "Mo" ~ scale_y_continuous(limit = c(-1, 1), breaks = seq(-1, 1, 0.5)),
+      metric == "rho" ~ scale_y_continuous(limit = c(-1, 1), breaks = seq(-1, 1, 0.5)),
       metric == "R0" ~ scale_y_continuous(limit = c(0, 5), breaks = seq(0, 5, 1))
     )
   ) +
@@ -118,48 +121,52 @@ p_metrics <- ggplot(df, aes(
   theme(legend.position = "none")
 
 
-ncases <- table(linelist$group)
-p_sus <- linelist %>%
-  arrange(onset) %>%
-  group_by(group, onset) %>%
-  summarise(cases = n(), .groups = "drop") %>%
-  group_by(group) %>%
-  mutate(
-    cum_cases = cumsum(cases),
-    prop_susceptible = 1 - cum_cases / as.integer(ncases[group]),
-    cum_cases_scaled = cum_cases / max(ncases)
-  ) %>%
-  ggplot(aes(x = onset, y = prop_susceptible, col = group)) +
-  facet_wrap(~ group, ncol = 1)+
-  geom_col(aes(y = cum_cases_scaled), col = NA, alpha = 0.5) +
-  geom_line() +
-  geom_point() +
-  geom_hline(yintercept = 0.5, linetype = "dashed") +
-  scale_y_continuous(sec.axis = sec_axis(~ . * max(ncases),
-                                         name = "Cumulative cases")) +
-  labs(x = "", y = "Proportion susceptible") +
-  theme_noso() +
-  theme(legend.position = "none")
+# ncases <- table(linelist$group)
+# p_sus <- linelist %>%
+#   arrange(onset) %>%
+#   group_by(group, onset) %>%
+#   summarise(cases = n(), .groups = "drop") %>%
+#   group_by(group) %>%
+#   mutate(
+#     cum_cases = cumsum(cases),
+#     prop_susceptible = 1 - cum_cases / as.integer(ncases[group]),
+#     cum_cases_scaled = cum_cases / max(ncases)
+#   ) %>%
+#   ggplot(aes(x = onset, y = prop_susceptible, col = group)) +
+#   facet_wrap(~ group, ncol = 1)+
+#   geom_col(aes(y = cum_cases_scaled), col = NA, alpha = 0.5) +
+#   geom_line() +
+#   geom_point() +
+#   geom_hline(yintercept = 0.5, linetype = "dashed") +
+#   scale_y_continuous(sec.axis = sec_axis(~ . * max(ncases),
+#                                          name = "Cumulative cases")) +
+#   labs(x = "", y = "Proportion susceptible") +
+#   theme_noso() +
+#   theme(legend.position = "none")
 
 
 cowplot::plot_grid(
   p_metrics,
-  p_sus,
   epicurve(),
   align = "v",
   ncol = 1,
-  rel_heights = c(1, 1, 0.7),
+  rel_heights = c(1,0.7),
   labels = "AUTO"
 )
 
 # TTABLE ------------------------------------------------------------------
+peaks <- get_peak(
+  linelist$onset,
+  linelist$group
+) %>%
+  arrange(observed_peak)
+
 #Let's get the average transmission table
 info <- tibble(
-  group = c("hcw", "patient", "epidemic"),
+  group = c(peaks$group,"outbreak"),
   peak = c(
-    as.Date("2020-03-21"),
-    as.Date("2020-03-26"),
-    as.Date("2021-01-01") # arbitrary after the last case
+    peaks$observed,
+    as.Date("2100-01-01") # arbitrary, post-outbreak
   )
 )
 ttabs <- future_map(trees, function(tree) {
@@ -188,7 +195,6 @@ peak_ttabs <- split(ttabs, ttabs$peak_group) %>%
       group_by(from, to) %>%
       summarise(n = round(mean(n)), .groups = "drop")
   })
-
 # Average Xtabs
 sjtabs <- map(peak_ttabs, ~ {
   .x %>%
@@ -204,9 +210,10 @@ sjtabs <- map(peak_ttabs, ~ {
       show.legend = T
     )
 })
-sjtabs[[1]]#epidemic
-sjtabs[[2]]#hcw
-sjtabs[[3]]#patient
+names(peak_ttabs)
+sjtabs[[1]]
+sjtabs[[2]]
+sjtabs[[3]]
 
 linktree:::gamma_formula(0.57, 0.8)
 
@@ -236,7 +243,7 @@ array <- draw_array(
   trees = trees,
   draw_function = draw_R0,
   args = list(
-    f = c("hcw" = 0.2, "patient" = 0.8),
+    f = c("hcw" = fHCW, "patient" = 1-fHCW),
     from_id = "from",
     to_id = "to"
   ),

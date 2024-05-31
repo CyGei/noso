@@ -1,14 +1,14 @@
 # Description: The uncertainty in the assorativity coefficient is derived from the uncertainty in `pi`.
 # The draw_* functions (draw_gamma, draw_delta, draw_R0) are used to draw random values of the metric given the uncertainty in `pi` for a unique tree.
 # The draw_array function is used to draw random values of the metric for multiple trees. This accounts for the uncertainty in the metric and the uncertainty in the tree.
-# Note that draw_mo has no uncertainty, as it is a deterministic function of the observed and expected ratios.
+# Note that draw_rho has no uncertainty, as it is a deterministic function of the observed and expected ratios.
 # Functions workflow:
 # *_formula: Compute the metric for a unique tree
 # draw_*: Draw random values of the metric for a unique tree
 # draw_array: Draw random values of the metric for multiple trees
 
 
-mo_formula <- function(from, to, levels = NULL, from_id, to_id, infector, infectee) {
+rho_formula <- function(from, to, levels = NULL, from_id, to_id, infector, infectee) {
   linktree:::check_fromto(from, to)
   ttab <- linktree:::ttable(from, to, levels)
   levels <- rownames(ttab)
@@ -35,7 +35,7 @@ mo_formula <- function(from, to, levels = NULL, from_id, to_id, infector, infect
 # Note there is no uncertainty here: n_samples is ignored (only to be consistent with the other draw_* functions)
 # diag is a logical indicating whether the diagonal elements should be returned
 # This is for compatibility with the other draw_* functions (comparison with gamma/delta)
-draw_mo <- function(from, to, levels = NULL, n_samples = 1, args) {
+draw_rho <- function(from, to, levels = NULL, n_samples = 1, args) {
   from_id <- args$from_id
   to_id <- args$to_id
   diag <- args$diag
@@ -43,17 +43,17 @@ draw_mo <- function(from, to, levels = NULL, n_samples = 1, args) {
   levels <- rownames(linktree:::ttable(from, to, levels))
   grid_levels <- expand.grid(from = levels, to = levels)
 
-  mo <- matrix(
+  rho <- matrix(
     apply(grid_levels, 1, function(x) {
-      mo_formula(from, to, levels, from_id, to_id, x[1], x[2])
+      rho_formula(from, to, levels, from_id, to_id, x[1], x[2])
     }),
     nrow = length(levels), ncol = length(levels),
     dimnames = list(levels, levels)
   )
   if (diag) {
-    mo <- diag(mo)
+    rho <- diag(rho)
   }
-  return(mo)
+  return(rho)
 }
 
 # This is where the uncertainty lies, all subsequent draw_* functions derive their values from draw_pi

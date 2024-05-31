@@ -43,13 +43,22 @@ get_Rematrix <- function(linelist, tree) {
 
 
 # Analysis ----------------------------------------------------------------
+cutoff_dates_init <- cutoff_dates
+window <- 5
+cutoff_dates <- seq.Date(min(cutoff_dates_init),
+                         max(cutoff_dates_init),
+                         by = window) %>%
+  c(., max(cutoff_dates_init)) %>% unique()
 
+day_month <- format(cutoff_dates, "%d\n%B")
+day <- format(cutoff_dates, "%d")
+dup <- which(duplicated(format(cutoff_dates, "%b")))
+day_month[dup] <- day[dup]
 
 pacman::p_load(furrr)
 plan(multisession, workers = length(cutoff_dates))
 
-R_df <- furrr::future_map(cutoff_dates, function(cutoff_date) {
-  window <- 7
+R_df <- furrr::future_map(cutoff_dates[-1], function(cutoff_date) {
   cutoff_date <- as.Date(cutoff_date)
   R <- lapply(trees, function(tree) {
     cut_tree <-
@@ -125,33 +134,43 @@ p_Re <- R_df %>%
                     ymin = lwr,
                     ymax = upr,
                   ),
-                  # pch = 21,
-                  # stroke = 0.5,
                   size = 0.4) +
-  theme_noso(date = FALSE) +
-  scale_x_date(
-    #limits = c(min(linelist$onset), max(linelist$onset)) -1,
-    breaks = c(cutoff_dates[1] - 7, cutoff_dates),
-    labels = format(c(cutoff_dates[1] - 7, cutoff_dates), "%d\n%b")
-  )+
   scale_y_continuous(breaks = seq(0, 2, 0.5), position = "right") +
   coord_cartesian(ylim = c(0, 2)) +
   labs(x = "",
        y = expression(R["e"]),
        color = expression(paste("Group level ", R["e"]))) +
-  theme(legend.key = element_rect(fill = "white", colour = "white")) +
-  guides(color = guide_legend(override.aes = list(linewidth = 5)))
+  theme_noso(date = TRUE)+
+  scale_x_date(
+    breaks = cutoff_dates,
+    labels = day_month,
+    expand = c(0.01, 0.01)
+  )+
+  theme(panel.spacing.x = unit(4, "mm")) +
+  theme(axis.text.x = element_text(
+    hjust = c(
+      0,
+      rep(0.5, length(cutoff_dates) - 2),
+      0.5
+    )
+  ))
 p_Re
 
 
-ggplot(Rsummary)+
-geom_errorbarh(
-  aes(
-    xmin = window_start,
-    xmax = window_end,
-    y = from_Re,
-    col = from
-  ),
-  height = 0.1,
-  linetype = "solid",
-)
+p_Re2021 <- p_Re
+p_Re2020 <- p_Re
+
+legend <- cowplot::get_legend(p_Re2021)
+p_Re<- cowplot::plot_grid(p_Re2020 +
+                     theme(legend.position = "none") +
+                     theme(axis.text.y = element_blank(),
+                           axis.title.y = element_blank(),
+                           axis.ticks.y = element_blank()),
+                   p_Re2021 +
+                     theme(legend.position = "none")+
+                     theme(strip.text.y = element_blank()),
+                   ncol = 2,
+                   labels = "AUTO")
+
+p_Re_lgd <- cowplot::plot_grid(p_Re, legend, ncol = 1, rel_heights = c(1, 0.1))
+p_Re_lgd

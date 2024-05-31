@@ -1,26 +1,24 @@
 source(here::here("scripts", "helpers.R"))
 load_libraries()
-load_data()
-linelist$group <- ifelse(grepl("^C", linelist$case_id), "patient", "hcw")
-outbreaker_chains <- outbreaker_chains %>%
+paper <- c("JHI2021", "eLife2022")[2]
+
+input_path <- here::here("data", paper, "input/")
+output_path <- here::here("data", paper, "output/")
+load_data(input_path)
+
+out <- out %>%
   filter(step > 500) %>%
   identify(ids = linelist$case_id)
-outbreaker_chains <- filter_alpha_by_kappa(outbreaker_chains, 1)
+out <- filter_alpha_by_kappa(out, 1L)
 
 trees <- get_trees(
-  out = outbreaker_chains,
+  out = out,
   ids = linelist$case_id,
   group = linelist$group,
-  date = linelist$onset_inferred
+  date = linelist$onset
 )
-
-cutoff_dates <- unique(c(seq(min(as.Date(linelist$onset_inferred)),
-                     max(as.Date(linelist$onset_inferred)),
-                     by = 7),
-                 max(linelist$onset_inferred)))
-
-
-
+cat(as.character(cutoff_dates), sep = "\n")
+epicurve()
 
 # Sensitivity in fHCW --------------------------------------------------------------------
 f_seq <- seq(0.1, 0.9, 0.1)
@@ -64,15 +62,19 @@ CrI_f <- furrr::future_map(f_seq, function(fHCW) {
          value = TRUE)
   )
 ))
-saveRDS(CrI_f, here("data", "CrI_f_delta.rds"))
+saveRDS(CrI_f, here::here(output_path, "CrI_f.rds"))
+CrI_f <- readRDS(here::here(output_path, "CrI_f.rds"))
 
-#CrI_f <- readRDS(here("data", "CrI_f_delta.rds"))
+
+
+
+# Plot --------------------------------------------------------------------
 
 bind_rows(CrI_f) %>%
   pivot_wider(names_from = metric, values_from = value) %>%
   drop_na() %>%
   ggplot(aes(
-           x = cutoff,
+           x = as.Date(cutoff),
            y = mean,
            ymin = lwr,
            ymax = upr,
@@ -85,17 +87,11 @@ bind_rows(CrI_f) %>%
     position = position_dodge(width = 0.25))+
   geom_hline(yintercept = 0, linetype = "dashed") +
   geom_vline(
-    data = tibble(
-      level = c("hcw", "patient"),
-      cutoff = c(6, 4)
-    ),
-    aes(xintercept = cutoff, col = level),
+    data = get_peak(linelist$onset, group = linelist$group) %>%
+      rename(level = group),
+    aes(xintercept = observed_peak, col = level),
     linetype = "dotted",
     linewidth = 1
-  )+
-  scale_color_manual(values = c("orange", "purple")) +
-  scale_x_discrete(
-    labels =  format(cutoff_dates, "%d\n%b")
   )+
   scale_y_continuous(
     breaks = seq(-1, 1, 0.5),
@@ -103,10 +99,10 @@ bind_rows(CrI_f) %>%
   ) +
   labs(
     x = "",
-    y = "Delta",
-    col = "Group"
+    y = expression(delta),
+    col = ""
   )+
-  theme_bw()
+  theme_noso()
 
 
 

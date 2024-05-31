@@ -5,26 +5,23 @@
 
 source(here::here("scripts", "helpers.R"))
 load_libraries()
-load_data()
-outbreaker_chains <- outbreaker_chains %>%
+paper <- c("JHI2021", "eLife2022")[2]
+
+input_path <- here::here("data", paper, "input/")
+output_path <- here::here("data", paper, "output/")
+load_data(input_path)
+
+out <- out %>%
   filter(step > 500) %>%
   identify(ids = linelist$case_id)
-outbreaker_chains <- filter_alpha_by_kappa(outbreaker_chains, 1)
+out <- filter_alpha_by_kappa(out, 1L)
 
 trees <- get_trees(
-  out = outbreaker_chains,
+  out = out,
   ids = linelist$case_id,
   group = linelist$group,
-  date = linelist$onset_inferred
+  date = linelist$onset
 )
-
-cutoff_dates <- unique(c(seq(min(
-  as.Date(linelist$onset_inferred)
-), max(
-  as.Date(linelist$onset_inferred)
-), by = 7), max(linelist$onset_inferred)))
-
-
 
 
 
@@ -102,8 +99,8 @@ R_df <- furrr::future_map(cutoff_dates[-1], function(cutoff_date) {
                from_date <= cutoff_date)
 
     cut_linelist <- linelist %>%
-      filter(onset_inferred >= (cutoff_date - window) &
-               onset_inferred <= cutoff_date)
+      filter(onset >= (cutoff_date - window) &
+               onset <= cutoff_date)
 
     get_Re(cut_linelist, cut_tree, by_group = TRUE)
   }) %>%
@@ -163,7 +160,7 @@ p_Re <- R_df %>%
     stroke = 0.5,
     size = 0.75
   ) +
-  theme_noso() +
+  theme_noso(date = TRUE) +
   labs(x = "", y = expression(R["e"]))
 
 cowplot::plot_grid(
@@ -190,7 +187,7 @@ R_df <- furrr::future_map(cutoff_dates[-1], function(cutoff_date) {
       filter(from_date <= cutoff_date)
 
     cut_linelist <- linelist %>%
-      filter(onset_inferred <= cutoff_date)
+      filter(onset <= cutoff_date)
 
     get_Re(cut_linelist, cut_tree, by_group = TRUE)
   }) %>%
@@ -198,7 +195,7 @@ R_df <- furrr::future_map(cutoff_dates[-1], function(cutoff_date) {
     dplyr::mutate(window_end = cutoff_date,
                   window_start = cutoff_date - as.numeric(cutoff_date -
                                                             min(as.Date(
-                                                              linelist$onset_inferred
+                                                              linelist$onset
                                                             ))))
 }) %>%
   bind_rows(.id = "window_id") %>%
@@ -280,6 +277,6 @@ Rsummary %>%
 
 #remaining susceptible at cutoff
 linelist %>%
-  filter(onset_inferred <= cutoff_dates[3]) %>%
+  filter(onset <= cutoff_dates[3]) %>%
   {100 - (nrow(.) / 148 * 100)}
 

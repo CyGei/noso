@@ -1,10 +1,10 @@
 source(here::here("scripts", "helpers.R"))
 load_libraries()
 
-# Mo by transmission type -------------------------------------------------
-#Here we calculate the Mo metric for each type of transmission
+# rho by transmission type -------------------------------------------------
+#Here we calculate the rho metric for each type of transmission
 
-mo_df <- lapply(c("eLife2022", "JHI2021"), function(paper) {
+rho_df <- lapply(c("eLife2022", "JHI2021"), function(paper) {
   input_path <- here::here(paste0("data/", paper, "/input/"))
   output_path <- here::here(paste0("data/", paper, "/output/"))
   load_data(input_path)
@@ -22,8 +22,8 @@ mo_df <- lapply(c("eLife2022", "JHI2021"), function(paper) {
 
 
   plan(multisession, workers = availableCores() - 1)
-  mo <- future_map(trees, ~ {
-    draw_mo(
+  rho <- future_map(trees, ~ {
+    draw_rho(
       from = .x$from_group,
       to = .x$to_group,
       levels = c("hcw", "patient"),
@@ -36,22 +36,22 @@ mo_df <- lapply(c("eLife2022", "JHI2021"), function(paper) {
     ) %>%
       as.data.frame() %>%
       rownames_to_column("from") %>%
-      pivot_longer(-from, names_to = "to", values_to = "mo")
+      pivot_longer(-from, names_to = "to", values_to = "rho")
   }, options = furrr_options(seed = TRUE)) %>%
     bind_rows(.id = "tree") %>%
     mutate(paper = paper)
 
-  mo
+  rho
 }) %>%
   bind_rows()
 
 pacman::p_load(ggplot2, gghalves)
 
-mo_df %>%
-  mutate(mo = linktree::gamma2delta(mo)) %>%
+rho_df %>%
+  mutate(rho = linktree::gamma2delta(rho)) %>%
   ggplot(aes(
     x = "",
-    y = mo,
+    y = rho,
     group = paper,
     fill = paper,
     split = paper
@@ -94,9 +94,9 @@ mo_df %>%
 
 
 
-# Global Mo by case type --------------------------------------------------
-#Here we calculate the Mo excess at the case type level
-mo_df <- lapply(c("eLife2022", "JHI2021"), function(paper) {
+# Global rho by case type --------------------------------------------------
+#Here we calculate the rho excess at the case type level
+rho_df <- lapply(c("eLife2022", "JHI2021"), function(paper) {
   input_path <- here::here(paste0("data/", paper, "/input/"))
   output_path <- here::here(paste0("data/", paper, "/output/"))
   load_data(input_path)
@@ -117,7 +117,7 @@ mo_df <- lapply(c("eLife2022", "JHI2021"), function(paper) {
     rename(level = Var1,
            f_case = Freq)
 
-  mo <- lapply(trees, function(tree) {
+  rho <- lapply(trees, function(tree) {
     prop.table(table(tree$from_group)) %>%
       as.data.frame() %>%
       rename(level = Var1)
@@ -133,12 +133,12 @@ mo_df <- lapply(c("eLife2022", "JHI2021"), function(paper) {
     left_join(y = f_cases, by = "level") %>%
     mutate(paper = paper)
 
-  return(mo)
+  return(rho)
 }) %>%
   bind_rows()
 
 
-mo_df %>%
+rho_df %>%
   ggplot(aes(
     x = "",
     y = Freq,
