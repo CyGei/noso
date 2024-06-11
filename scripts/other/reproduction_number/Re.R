@@ -280,3 +280,94 @@ linelist %>%
   filter(onset <= cutoff_dates[3]) %>%
   {100 - (nrow(.) / 148 * 100)}
 
+
+
+
+
+# Average Number of Introductions -----------------------------------------
+cutoff_breaks <- seq(min(cutoff_dates) + window,
+                     max(cutoff_dates),
+                     by = window ) %>% c(., max(cutoff_dates)) %>%
+  unique()
+
+window <- 7
+intro_df <- furrr::future_map(cutoff_breaks, function(cutoff_break) {
+  window_start <- cutoff_break - window
+  window_end <- cutoff_break
+
+  intros <- lapply(trees, function(tree) {
+      tree %>%
+      filter(is.na(from)) %>%
+      filter(to_date >= window_start & to_date <= window_end) %>%
+      group_by(to_group) %>%
+      summarise(n_intros = sum(is.na(from)), .groups = "drop") %>%
+      mutate(window_start = window_start, window_end = window_end)
+  }) %>%
+    bind_rows()
+  return(intros)
+}) %>%
+  bind_rows(.id = "window_id") %>%
+  mutate(window_median = window_start + as.numeric(window_end - window_start) / 2)
+
+intro_summary <- intro_df %>%
+  group_by(to_group, window_id) %>%
+  summarise(
+    mean = mean(n_intros),
+    lwr = quantile(n_intros, 0.025),
+    upr = quantile(n_intros, 0.975),
+    window_start = first(window_start),
+    window_end = first(window_end),
+    window_median = first(window_median),
+    .groups = "drop"
+  ) %>%
+  group_by(window_id) %>%
+  mutate(global_intro = sum(mean)) %>%
+  ungroup()
+
+p_intros <- intro_df %>%
+  ggplot(aes(
+    x = window_median,
+    y = n_intros,
+    fill = to_group,
+    group = interaction(to_group, window_id)
+  )) +
+  geom_errorbarh(
+    data = intro_summary,
+    aes(xmin = window_start, xmax = window_end, y = global_intro),
+    height = 0.05,
+    linetype = "solid",
+    col = "#636363"
+  ) +
+  geom_violin(
+    adjust = 1.8,
+    col = NA,
+    position = position_dodge(width = 4),
+    alpha = 0.7
+  ) +
+  geom_pointrange(
+    data = intro_summary,
+    aes(
+      x = window_median,
+      y = mean,
+      ymin = lwr,
+      ymax = upr,
+    ),
+    position = position_dodge(width = 4),
+    pch = 21,
+    stroke = 0.5,
+    size = 0.75
+  ) +
+  scale_y_continuous(breaks = seq(0, 16, 2)) +
+  coord_cartesian(ylim = c(0, 14)) +
+  theme_noso() +
+  labs(x = "", y = "introductions")
+
+
+cowplot::plot_grid(
+  p_intros + theme(legend.position = "none"),
+  epicurve(),
+  ncol = 1,
+  rel_heights = c(2, 1.5),
+  align = "v",
+  labels = "AUTO"
+)
