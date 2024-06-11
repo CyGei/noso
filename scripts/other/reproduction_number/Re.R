@@ -2,56 +2,27 @@
 # using transmission chain data.
 # The effective reproductive number describes how many new infections an individual
 # infected  causes on average in a population which is subject to a certain degree of immunity and intervention measures.
+# This is not applicable in real-time.
+
+# Instead we need to estimate the instantaneous reproduction Rt over time windows.
+# You can estimate Rt at time t only if you have data up to time t + SI.
+
 
 source(here::here("scripts", "helpers.R"))
 load_libraries()
-paper <- c("JHI2021", "eLife2022")[2]
+paper <- c("JHI2021", "eLife2022")[2] #chose which paper to run
+load_data(paper)
+output_path <- here::here("data", paper, "output")
+epicurve()
 
-input_path <- here::here("data", paper, "input/")
-output_path <- here::here("data", paper, "output/")
-load_data(input_path)
-
-out <- out %>%
+#complete tree
+trees <- out[[length(out)]] %>%
   filter(step > 500) %>%
-  identify(ids = linelist$case_id)
-out <- filter_alpha_by_kappa(out, 1L)
-
-trees <- get_trees(
-  out = out,
-  ids = linelist$case_id,
-  group = linelist$group,
-  date = linelist$onset
-)
-
-
-
-# get_R functions -------------------------------------------------------------
-# get_Re <- function(linelist, tree, by_group = FALSE) {
-#   tree <- tree[!is.na(tree$from),]
-#   if (by_group) {
-#     cases <- table(linelist$group)
-#     transmissions <- tapply(tree$from, tree$from_group, length)
-#
-#     #FIXED: transmissions should have as many elements as cases
-#     transmissions <- transmissions[names(cases)]
-#     transmissions[is.na(transmissions)] <- 0
-#     names(transmissions) <- names(cases)
-#
-#     R <- data.frame(
-#       from_group = names(transmissions),
-#       transmissions = as.vector(transmissions),
-#       cases = as.vector(cases),
-#       R = as.vector(transmissions / cases)
-#     )
-#   } else {
-#     transmissions <- nrow(tree)
-#     cases <- nrow(linelist)
-#     R <- data.frame(R = transmissions / cases)
-#   }
-#
-#   return(R)
-# }
-
+  identify(ids = linelist$case_id) %>%
+  filter_alpha_by_kappa(1L) %>%
+  get_trees(ids = linelist$case_id,
+            group = linelist$group,
+            date = linelist$onset)
 
 get_Re <- function(linelist, tree, by_group = FALSE) {
   tree <- tree[!is.na(tree$from), ]
@@ -82,30 +53,35 @@ get_Re <- function(linelist, tree, by_group = FALSE) {
 }
 
 
-
 # Re: estimating R using 7 days time windows ------------------------------
-pacman::p_load(furrr)
-plan(multisession, workers = length(cutoff_dates))
+window <- ifelse(paper == "JHI2021", 5, 7)
+start <- min(linelist$onset) + window
+end <- max(linelist$onset)
+max_si <- 14
+cutoff_breaks <- c(seq.Date(start, end, by = window), end) %>% unique()
 
-R_df <- furrr::future_map(cutoff_dates[-1], function(cutoff_date) {
-  window <- 7
-  cutoff_date <- as.Date(cutoff_date)
+pacman::p_load(furrr)
+plan(multisession, workers = length(cutoff_breaks))
+R_df <- furrr::future_map(cutoff_breaks, function(cutoff_break) {
+
+    window_start <- cutoff_break - window
+    window_end <- cutoff_break
+
   R <- lapply(trees, function(tree) {
     cut_tree <-
       tree %>%
       drop_na(from) %>%
-      mutate(from_date = as.Date(from_date)) %>%
-      filter(from_date >= (cutoff_date - window) &
-               from_date <= cutoff_date)
+      filter(from_date >= window_start &
+               from_date <= window_end)
 
     cut_linelist <- linelist %>%
-      filter(onset >= (cutoff_date - window) &
-               onset <= cutoff_date)
+      filter(onset >= window_start &
+                onset <= window_end)
 
     get_Re(cut_linelist, cut_tree, by_group = TRUE)
   }) %>%
     bind_rows() %>%
-    dplyr::mutate(window_end = cutoff_date, window_start = cutoff_date - window)
+    dplyr::mutate(window_end = window_end, window_start = window_start)
 }) %>%
   bind_rows(.id = "window_id") %>%
   mutate(window_median = window_start + as.numeric(window_end - window_start) / 2)
@@ -160,13 +136,13 @@ p_Re <- R_df %>%
     stroke = 0.5,
     size = 0.75
   ) +
-  theme_noso(date = TRUE) +
+  theme_noso(day_break = 7, date = TRUE) +
   labs(x = "", y = expression(R["e"]))
 
 cowplot::plot_grid(
   p_Re + theme(legend.position = "none") +
     coord_cartesian(ylim = c(0, 4)),
-  epicurve(),
+  epicurve(day_break = 7),
   ncol = 1,
   rel_heights = c(2, 1.5),
   align = "v",
@@ -175,108 +151,89 @@ cowplot::plot_grid(
 
 
 
-# Estimating Re from start of outbreak up to a cutoff ------------------------------
+# Estimate the average number of introductions per time window ------------
 
-R_df <- furrr::future_map(cutoff_dates[-1], function(cutoff_date) {
-  cutoff_date <- as.Date(cutoff_date)
-  R <- lapply(trees, function(tree) {
+intro_df <- furrr::future_map(cutoff_breaks, function(cutoff_break) {
+  window_start <- cutoff_break - window
+  window_end <- cutoff_break
+
+  intros <- lapply(trees, function(tree) {
     cut_tree <-
       tree %>%
-      drop_na(from) %>%
-      mutate(from_date = as.Date(from_date)) %>%
-      filter(from_date <= cutoff_date)
-
-    cut_linelist <- linelist %>%
-      filter(onset <= cutoff_date)
-
-    get_Re(cut_linelist, cut_tree, by_group = TRUE)
+      filter((from_date >= window_start & from_date <= window_end) |
+               is.na(from_date) &
+               to_date >= window_start & to_date <= window_end
+      )
+    intro <- cut_tree %>%
+      group_by(to_group) %>%
+      summarise(n_intros = sum(is.na(from)), .groups = "drop") %>%
+      mutate(window_start = window_start, window_end = window_end)
+    return(intro)
   }) %>%
-    bind_rows() %>%
-    dplyr::mutate(window_end = cutoff_date,
-                  window_start = cutoff_date - as.numeric(cutoff_date -
-                                                            min(as.Date(
-                                                              linelist$onset
-                                                            ))))
+    bind_rows()
+
+  return(intros)
 }) %>%
   bind_rows(.id = "window_id") %>%
   mutate(window_median = window_start + as.numeric(window_end - window_start) / 2)
 
-Rsummary <- R_df %>%
-  group_by(from_group, window_id) %>%
+intro_summary <- intro_df %>%
+  group_by(to_group, window_id) %>%
   summarise(
-    mean = mean(Re),
-    lwr = quantile(Re, 0.025),
-    upr = quantile(Re, 0.975),
+    mean = mean(n_intros),
+    lwr = quantile(n_intros, 0.025),
+    upr = quantile(n_intros, 0.975),
     window_start = first(window_start),
     window_end = first(window_end),
     window_median = first(window_median),
-    cases = first(cases),
     .groups = "drop"
   ) %>%
   group_by(window_id) %>%
-  mutate(global_Re = mean(rep(mean, cases))) %>%
+  mutate(global_intro = sum(mean)) %>%
   ungroup()
 
-p_Re <- R_df %>%
+p_intros <- intro_df %>%
   ggplot(aes(
-    x = window_end,
-    y = Re,
-    fill = from_group,
-    group = interaction(from_group, window_id)
+    x = window_median,
+    y = n_intros,
+    fill = to_group,
+    group = interaction(to_group, window_id)
   )) +
-  geom_hline(yintercept = 1, linetype = "dashed") +
   geom_errorbarh(
-    data = Rsummary,
-    aes(
-      xmin = window_start,
-      xmax = window_end,
-      y = global_Re,
-      group = window_id
-    ),
-    height = 0.1,
-    linewidth = 0.2,
+    data = intro_summary,
+    aes(xmin = window_start, xmax = window_end, y = global_intro),
+    height = 0.05,
     linetype = "solid",
     col = "#636363"
   ) +
   geom_violin(
     adjust = 1.8,
     col = NA,
-    position = position_dodge(width = 1),
+    position = position_dodge(width = 4),
     alpha = 0.7
   ) +
   geom_pointrange(
-    data = Rsummary,
+    data = intro_summary,
     aes(
-      x = window_end,
+      x = window_median,
       y = mean,
       ymin = lwr,
       ymax = upr,
     ),
-    position = position_dodge(width = 1),
+    position = position_dodge(width = 4),
     pch = 21,
     stroke = 0.5,
     size = 0.75
   ) +
-  theme_noso() +
-  labs(x = "", y = expression(R["e"]))
+  theme_noso(day_break = 7, date = TRUE) +
+  labs(x = "", y = "introductions")
+
 
 cowplot::plot_grid(
-  p_Re + theme(legend.position = "none") +
-    coord_cartesian(ylim = c(0, 4)),
-  epicurve(),
+  p_intros + theme(legend.position = "none"),
+  epicurve(day_break = 7),
   ncol = 1,
   rel_heights = c(2, 1.5),
   align = "v",
   labels = "AUTO"
 )
-
-#R0
-Rsummary %>%
-  mutate(across(where(is.numeric), \(x) round(x, 2))) %>%
-  filter(window_id == 2)
-
-#remaining susceptible at cutoff
-linelist %>%
-  filter(onset <= cutoff_dates[3]) %>%
-  {100 - (nrow(.) / 148 * 100)}
-

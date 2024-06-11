@@ -129,46 +129,31 @@ draw_R0 <- function(from, to, levels = NULL, n_samples = 1000, args) {
 }
 
 
-draw_array <- function(from_col, to_col, levels, trees, draw_function, args = list(), cutoff_dates = NULL, n_samples = 1000) {
-  pacman::p_load("furrr")
+draw_array <- function(from_col, to_col, levels, trees, draw_function, args = list(), n_samples = 1000) {
   # Check inputs
   if (!is.function(draw_function)) stop("draw_function must be a function")
   if (!is.list(args)) stop("args must be a list")
   if (length(levels) < 2) stop("There must be at least two group levels in the data")
+  if (length(unique(vapply(trees, length, FUN.VALUE = integer(1))))>1) stop("All trees must have the same length")
 
   N <- n_samples
   L <- length(levels)
-  C <- if (is.null(cutoff_dates)) 1 else length(cutoff_dates)
-  Tr <- length(trees)
+  Tr <- length(trees[[1]])
+  C <- length(trees)
 
-  if (!is.null(cutoff_dates)) {
-    dimnames <- list("sample" = NULL, "level" = levels, "cutoff" = as.character(cutoff_dates), "tree" = NULL)
-  } else {
-    dimnames <- list("sample" = NULL, "level" = levels, "cutoff" = NULL, "tree" = NULL)
-  }
-  result <- array(NA_real_, dim = c(N, L, C, Tr), dimnames = dimnames)
-
- # plan(multisession, workers = future::availableCores() - 10)
-
-  cut_trees <- furrr::future_map(trees, function(tree) {
-    if (is.null(cutoff_dates)) {
-      list(tree)
-    } else {
-      return(lapply(cutoff_dates, function(cutoff_date) cut_tree_by_date(tree, cutoff_date)))
-    }
-  }, .options = furrr::furrr_options(seed = FALSE))
-
+  dimnames <- list("sample" = NULL, "level" = levels, "tree" = NULL, "cutoff" = NULL)
+  result <- array(NA_real_, dim = c(N, L, Tr, C), dimnames = dimnames)
   draw_results <-
-    furrr::future_map(unlist(cut_trees, recursive = FALSE),
-                      function(cut_tree) {
+    furrr::future_map(unlist(trees, recursive = FALSE),
+                      function(tree) {
                         if ("from_id" %in% names(args) && "to_id" %in% names(args)) {
-                          args$from_id <- cut_tree[[args$from_id]]
-                          args$to_id <- cut_tree[[args$to_id]]
+                          args$from_id <- tree[[args$from_id]]
+                          args$to_id <- tree[[args$to_id]]
                         }
 
                         arg_list <- list(
-                          from = cut_tree[[from_col]],
-                          to = cut_tree[[to_col]],
+                          from = tree[[from_col]],
+                          to = tree[[to_col]],
                           levels = levels,
                           n_samples = N,
                           args = args
@@ -178,7 +163,6 @@ draw_array <- function(from_col, to_col, levels, trees, draw_function, args = li
                       },
                       .options = furrr::furrr_options(seed = TRUE)
     )
-  #plan(sequential)
   result[] <- unlist(draw_results)
 
   return(result)
@@ -198,120 +182,33 @@ draw_CrI <- function(array, dims, alpha = 0.05) {
 }
 
 
-# ARCHIVE -------------------------------------------------------------------------------------
+
+# test <- future_map(seq_along(cutoff_dates), function(cutoff) {
+#   lapply(seq_along(trees[[1]]), function(step) {
+#     draw_delta(
+#       from = trees[[cutoff]][[step]]$from_group,
+#       to = trees[[cutoff]][[step]]$to_group,
+#       args = list(f = c(
+#         "hcw" = 0.33, "patient" = 0.67
+#       ))
+#     ) %>% as.data.frame()
+#   }) %>% bind_rows(.id = "step") %>% mutate(cutoff_date = cutoff_dates[cutoff])
+# }, .options = furrr_options(seed = TRUE)) %>%
+#   bind_rows(.id = "cutoff")
 
 
-# draw_array <- function(from_col, to_col, trees, levels, draw_function, draw_args, cutoff_dates = NULL, n_samples = 1000) {
-#   # check if the draw_function is valid
-#   if (!is.function(draw_function)) {
-#     stop("draw_function must be a function")
-#   }
-#   # check if the draw_args is a list
-#   if (!is.list(draw_args)) {
-#     stop("draw_args must be a list")
-#   }
-#   # check levels
-#   if (length(levels) < 2) {
-#     stop("There must be at least two group levels in the data")
-#   }
+# test %>%
+#   pivot_longer(cols = c("hcw", "patient"),
+#                names_to = "level", values_to = "value") %>%
+#   ggplot(aes(x = cutoff_date,
+#              y = value,
+#              color = level, group = interaction(level, cutoff_date))) +
+#   geom_violin()
 
-#   N <- n_samples
-#   L <- length(levels)
-#   Tr <- length(trees)
-#   C <- if (is.null(cutoff_dates)) 1 else length(cutoff_dates)
-#   result <- array(NA, dim = c(N, L, Tr, C), dimnames = list("sample" = NULL, "level" = levels, "tree" = NULL, "cutoff" = NULL))
-
-#   for (t in 1:Tr) {
-#     tree <- trees[[t]]
-#     for (c in 1:C) {
-#       if (is.null(cutoff_dates)) {
-#         cut_tree <- tree
-#       } else {
-#         cutoff_date <- cutoff_dates[c]
-#         cut_tree <- cut_tree_by_date(tree, cutoff_date)
-#       }
-#       draw_result <- do.call(draw_function, c(list(from = cut_tree[[from_col]], to = cut_tree[[to_col]], levels = names(f), n_samples = N), draw_args))
-#       result[, , t, c] <- draw_result
-#     }
-#   }
-#   return(result)
-# }
-
-
-# draw_density <- function(array, dims) {
-#   compute_density <- function(data) {
-#     clean_data <- na.omit(data)
-#     if (length(clean_data) < 2) {
-#       return(data.frame(x = rep(NA, 512), y = rep(NA, 512)))
-#     } else {
-#       dens <- density(clean_data, from = -1, to = 1, na.rm = TRUE)
-#       return(data.frame(x = dens$x, y = dens$y))
-#     }
-#   }
-#   replace_indices_with_values <- function(indices, values) {
-#     if (!is.null(values)) {
-#       return(values[indices])
-#     } else {
-#       return(indices)
-#     }
-#   }
-
-#   density_data <- apply(array, dims, compute_density)
-#   dim_meta <- dimnames(array)[dims]
-#   dim_values <- lapply(dim(array)[dims], seq_len)
-#   dim_grid <- expand.grid(Map(replace_indices_with_values, dim_values, dim_meta), stringsAsFactors = FALSE)
-
-#   # Set names for dimensions
-#   names(dim_grid) <- ifelse(sapply(names(dim_meta), is.null), paste0("dim_", dims), names(dim_meta))
-#   # names(dim_grid) <- sapply(seq_along(dim_meta), function(i) {
-#   #   if (is.null(dim_meta[[i]])) {
-#   #     return(paste0("dim_", dims[i]))
-#   #   } else {
-#   #     return(dim_meta[[i]])
-#   #   }
-#   # })
-
-#   density_df <- data.frame(
-#     density_x = unlist(lapply(density_data, "[[", "x")),
-#     density_y = unlist(lapply(density_data, "[[", "y")),
-#     dim_grid
+# draw_delta(
+#   from = trees[[1]][[1]]$from_group,
+#   to = trees[[1]][[1]]$to_group,
+#   args = list(
+#     f = c("hcw" = 0.33, "patient" = 0.67)
 #   )
-
-#   return(density_df)
-# }
-
-
-#
-# draw_CrI <- function(array, dims, alpha = 0.05) {
-#   compute_CrI <- function(x, alpha = 0.05) {
-#     x <- x[!is.na(x)]  # Remove NAs
-#     mean_x <- mean(x)
-#     quantiles <- quantile(x, probs = c(alpha/2, 1 - alpha/2))
-#     return(c(mean = mean_x, lwr = quantiles[[1]], upr = quantiles[[2]]))
-#   }
-#
-#   replace_indices_with_values <- function(indices, values) {
-#     if (!is.null(values)) {
-#       return(values[indices])
-#     } else {
-#       return(indices)
-#     }
-#   }
-#
-#   CrI_data <- apply(array, dims, compute_CrI, alpha = alpha)
-#   dim_meta <- dimnames(array)[dims]
-#   dim_values <- lapply(dim(array)[dims], seq_len)
-#   dim_grid <- expand.grid(Map(replace_indices_with_values, dim_values, dim_meta), stringsAsFactors = FALSE)
-#
-#   # Set names for dimensions
-#   names(dim_grid) <- ifelse(sapply(names(dim_meta), is.null), paste0("dim_", dims), names(dim_meta))
-#
-#   CrI_df <- data.frame(
-#     mean = unlist(lapply(CrI_data, "[[", "mean")),
-#     lwr = unlist(lapply(CrI_data, "[[", "lwr")),
-#     upr = unlist(lapply(CrI_data, "[[", "upr")),
-#     dim_grid
-#   )
-#
-#   return(CrI_df)
-# }
+# )

@@ -6,29 +6,49 @@ load_libraries <- function() {
   if (!require("pacman")) {
     install.packages("pacman")
   }
-  pacman::p_load(here, outbreaker2, tidyverse, furrr)
+  pacman::p_load(here, outbreaker2, tidyverse, purrr, furrr, reshape2)
   pacman::p_load_gh("CyGei/linktree")
 }
 
-load_data <- function(data_path) {
-  linelist <- readRDS(here::here(data_path, "linelist.rds"))
-  out <- readRDS(here::here(data_path, "out.rds"))
-  class(out) <- c("outbreaker_chains", "data.frame")
-  # if (grepl("JHI", data_path)) {
-  #   cutoff_dates <- unique(c(seq(
-  #     min(linelist$onset) + 5, max(linelist$onset), by = 3
-  #   ), max(linelist$onset)))
-  #
-  # } else {
-  #   cutoff_dates <- unique(c(seq(
-  #     min(linelist$onset) + 7, max(linelist$onset), by = 7
-  #   ), max(linelist$onset)))
-  #
-  # }
+load_data <- function(paper) {
+  linelist <- readRDS(here("data", paper, "input/linelist.rds"))
   cutoff_dates <- sort(unique(linelist$onset))
-  assign("linelist", linelist, envir = .GlobalEnv)
-  assign("out", out, envir = .GlobalEnv)
-  assign("cutoff_dates", cutoff_dates, envir = .GlobalEnv)
+
+  #outbreaker
+  outbreaker_path <- here("data", paper, "output/outbreaker/")
+  outbreaker_files <- list.files(outbreaker_path, full.names = FALSE)
+  cutoff_days <- sort(as.integer(str_extract(outbreaker_files, "\\d+")))
+  cutoff_map <- setNames(cutoff_dates, cutoff_days)
+
+  # Load and process outbreaker files
+  out <- lapply(cutoff_days, function(cutoff_day) {
+    outbreaker_data <- readRDS(here(
+      outbreaker_path,
+      paste0("outbreaker_", cutoff_day, ".rds")
+    ))
+    outbreaker_data$cutoff <- cutoff_day
+    outbreaker_data$cutoff_date <- cutoff_map[[as.character(cutoff_day)]]
+    outbreaker_data
+  })
+
+  if (paper == "eLife2022") {
+    #remove 1st cutoff off of everything since there's only one case
+    out <- out[-1]
+    cutoff_dates <- cutoff_dates[-1]
+    cutoff_days <- cutoff_days[-1]
+    cutoff_map <- cutoff_map[-1]
+  }
+
+  list2env(
+    list(
+      linelist = linelist,
+      out = out,
+      cutoff_dates = cutoff_dates,
+      cutoff_days = cutoff_days,
+      cutoff_map = cutoff_map
+    ),
+    envir = .GlobalEnv
+  )
 }
 
 load_draw_functions <- function() {
@@ -63,8 +83,9 @@ identify <- function(out, ids) {
   alpha_cols <- grep("^alpha_", names(out), value = TRUE)
   stopifnot(length(ids) == length(alpha_cols))
 
-  out[alpha_cols] <- lapply(out[alpha_cols], function(x)
-    ids[x])
+  out[alpha_cols] <- lapply(out[alpha_cols], function(x) {
+    ids[x]
+  })
   cols_idx <- grep("(\\d+)$", names(out))
   cols <- names(out)[cols_idx]
   digits <- as.numeric(gsub("[^0-9]", "", cols))
@@ -167,29 +188,6 @@ get_trees <- function(out, ids, ...) {
 }
 
 
-cut_tree_by_date <- function(tree,
-                             cutoff_date,
-                             from_date_col = "from_date",
-                             to_date_col = "to_date") {
-  # Convert cutoff_date to Date object if it's not
-  if (!inherits(cutoff_date, "Date")) {
-      cutoff_date <- as.Date(cutoff_date)
-  }
-  # Check if the provided column names exist in the tree data frame
-  if (!all(c(from_date_col, to_date_col) %in% names(tree))) {
-    stop("The provided column names do not exist in the tree data frame.")
-  }
-
-  # Filter-out rows where either from_date or to_date is NA or greater than the cutoff_date
-  tree_filtered <- tree[!(is.na(tree[[from_date_col]]) |
-                            is.na(tree[[to_date_col]]) |
-                            tree[[from_date_col]] > cutoff_date |
-                            tree[[to_date_col]] > cutoff_date), ]
-  return(tree_filtered)
-}
-
-
-
 #' Estimate the peak of incidence
 #'
 #' This function estimates the peak of incidence for a given date. If a group is specified,
@@ -223,16 +221,17 @@ get_peak <- function(date, group = NULL) {
 }
 
 
-#computes pi from gamma and f
+# computes pi from gamma and f
 pi_formula <- function(gamma, f) {
-  numerator = gamma * f
-  denominator = 1 - f + gamma * f
+  numerator <- gamma * f
+  denominator <- 1 - f + gamma * f
   return(numerator / denominator)
 }
 
 # GGPLOT ------------------------------------------------------------------
 
-theme_noso <- function(fill = TRUE,
+theme_noso <- function(day_break = 2,
+                       fill = TRUE,
                        col = TRUE,
                        date = TRUE,
                        legend_position = "bottom") {
@@ -262,29 +261,25 @@ theme_noso <- function(fill = TRUE,
     ),
     if (fill) {
       scale_fill_manual(
-        values = c(hcw = "#FF9300", patient = "purple"),
+        values = c(hcw = "#FF9300", patient = "#d800d1"),
         labels = c("HCW", "Patient")
       )
     },
     if (col) {
       scale_color_manual(
-        values = c(hcw = "#FF9300", patient = "purple"),
+        values = c(hcw = "#FF9300", patient = "#d800d1"),
         labels = c("HCW", "Patient")
       )
     },
     if (date) {
-      cutoff_dates <- seq(
-        min(linelist$onset),
-        max(linelist$onset),
-        by = 2
-      )
-      day_month <- format(cutoff_dates, "%d\n%B")
-      day <- format(cutoff_dates, "%d")
-      dup <- which(duplicated(format(cutoff_dates, "%b")))
+      cutoff_breaks <- seq(min(linelist$onset), max(linelist$onset), by = day_break)
+      day_month <- format(cutoff_breaks, "%d\n%B")
+      day <- format(cutoff_breaks, "%d")
+      dup <- which(duplicated(format(cutoff_breaks, "%b")))
       day_month[dup] <- day[dup]
       scale_x_date(
-        #limits = c(min(linelist$onset)-0.75, max(linelist$onset)) + 0.75,
-        breaks = cutoff_dates,
+        limits = c(min(linelist$onset) - 1, max(linelist$onset) + 1),
+        breaks = cutoff_breaks,
         labels = day_month,
         expand = c(0.01, 0.01)
       )
@@ -295,67 +290,99 @@ theme_noso <- function(fill = TRUE,
 
 
 # epicurve
-epicurve <- function(legend_position = "bottom") {
-  # cutoff_dates <-
-  #   unique(c(min(linelist$onset), cutoff_dates, max(linelist$onset)))
-
-  linelist %>%
+epicurve <- function(day_break = 2,
+                     legend_position = "bottom",
+                     facet = FALSE) {
+  case_counts <-
+    linelist %>%
     mutate(col = as.character(row_number())) %>%
     group_by(group, onset, col) %>%
-    summarise(n = n()) %>%
-    ggplot(aes(
-      x = onset,
-      y = n,
-      fill = group
-    )) +
+    summarise(n = n())
+
+  peaks <- get_peak(date = linelist$onset, group = linelist$group) %>%
+    rowwise() %>%
+    mutate(max_n = sum(case_counts$n[case_counts$onset == observed_peak]))
+
+  gg <- case_counts %>%
+    ggplot(aes(x = onset, y = n, fill = group)) +
     geom_col(
       position = "stack",
       width = 1,
-      col = "black", linewidth = 0.35) +
+      col = "#494949",
+      linewidth = 0.35
+    ) +
     geom_segment(
-      data = get_peak(date = linelist$onset, group = linelist$group),
+      data = peaks,
       aes(
         x = observed_peak,
         y = c(10, 10),
         xend = observed_peak,
-        yend = c(7, 8),
+        yend = max_n,
         linetype = "Peak"
       ),
       col = "black",
-      linewidth = 1.3,
-      lineend = "round",
-      linejoin = "bevel",
-      arrow = arrow(length = unit(0.5, "cm"))
+      linewidth = 1.75,
+      linejoin = 'mitre',
+      lineend = 'square',
+      arrow = arrow(length = unit(0.25, 'cm'), type = 'closed')
     ) +
     geom_segment(
-      data = get_peak(date = linelist$onset, group = linelist$group),
+      data = peaks,
       aes(
         x = observed_peak,
         y = c(10, 10),
         xend = observed_peak,
-        yend = c(7, 8),
+        yend = max_n,
+        linetype = "Peak",
         col = group
       ),
       show.legend = FALSE,
-      linewidth = 1,
-      lineend = "round",
-      linejoin = "bevel",
-      arrow = arrow(length = unit(0.5, "cm"))
+      linewidth = 0.5,
+      linejoin = 'mitre',
+      lineend = 'square',
+      arrow = arrow(length = unit(0.25, 'cm'), type = 'closed')
     ) +
     scale_y_continuous(breaks = seq(0, 50, by = 2)) +
     labs(
-      x = "Date of onset",
+      x = "Onset",
       y = "Cases",
       fill = "",
       col = "",
       linetype = ""
     ) +
-    theme_noso() +
+    theme_noso(day_break) +
     theme(
       legend.position = legend_position,
       legend.background = element_rect(color = "black"),
-      legend.key.size = unit(0.5, "cm")
+      legend.key=element_blank(),
+      legend.key.size = unit(0.5, "cm"),
+      legend.margin = margin(0.1, 0.1, 0.1, 0, "cm"),
     ) +
     guides(fill = guide_legend(override.aes = list(size = 0.25)),
-           linetype = guide_legend(override.aes = list(linewidth = 0.55)))
+           linetype = guide_legend(override.aes = list(linewidth = 0.2,
+                                                       size = 0.1)))
+
+  if (facet) {
+    gg <- gg +
+      facet_wrap(
+        ~ "Cases",
+        ncol = 1,
+        labeller = label_parsed,
+        strip.position = "left"
+      ) +
+      theme(
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.y.left = element_text(
+          angle = 90,
+          face = "bold",
+          size = 14,
+          margin = margin(r = -0.5, l = -1, 0, 0, "pt")
+        ),
+        panel.spacing.y = unit(0.5, "lines")
+      ) +
+      labs(y = "")
+  }
+
+  return(gg)
 }
