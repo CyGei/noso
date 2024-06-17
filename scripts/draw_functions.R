@@ -1,63 +1,76 @@
-# Description: The uncertainty in the assorativity coefficient is derived from the uncertainty in `pi`.
+# Description:
+# For a unique transmission tree:
+# The uncertainty in rho is derived from the uncertainty in `phi` i.e. the the proportion of cases in the infectee group relative to all cases.
+# The uncertainty in the assorativity coefficient (gamma/delta) is derived from the uncertainty in `pi`.
 # The draw_* functions (draw_gamma, draw_delta, draw_R0) are used to draw random values of the metric given the uncertainty in `pi` for a unique tree.
 # The draw_array function is used to draw random values of the metric for multiple trees. This accounts for the uncertainty in the metric and the uncertainty in the tree.
-# Note that draw_rho has no uncertainty, as it is a deterministic function of the observed and expected ratios.
 # Functions workflow:
 # *_formula: Compute the metric for a unique tree
 # draw_*: Draw random values of the metric for a unique tree
 # draw_array: Draw random values of the metric for multiple trees
 
 
-rho_formula <- function(from, to, levels = NULL, from_id, to_id, infector, infectee) {
+draw_phi <- function(from,
+                     to,
+                     levels = NULL,
+                     from_id,
+                     to_id,
+                     n_samples = 1000) {
+  linktree:::check_fromto(from, to)
+  ttab <- linktree:::ttable(from, to, levels)
+  levels <- rownames(ttab)
+  # Expected
+  n_cases <- table(factor(unique(na.omit(cbind(
+    c(from, to), c(from_id, to_id)
+  )))[, 1], levels = levels))
+  expected_numerator <- n_cases - 1
+  expected_denominator <- sum(n_cases) - 1
+  expected_ratio <- expected_numerator / expected_denominator
+
+  phi <- vapply(seq_along(levels), function(i) {
+    if (expected_denominator < 1 || expected_ratio[i] < 0) {
+      rep(NA, n_samples)
+    } else {
+      rbinom(n = n_samples,
+             size = expected_denominator,
+             prob = expected_ratio[i]) / expected_denominator
+    }
+  }, FUN.VALUE = numeric(n_samples))
+  dimnames(phi) <- list(NULL, levels)
+  return(phi)
+}
+
+
+# We draw uncertainty in rho from the uncertainty in expected_ratio using binomial distribution
+draw_rho <- function(from,
+                     to,
+                     levels = NULL,
+                     n_samples = 1000,
+                     args) {
+  from_id <- args$from_id
+  to_id <- args$to_id
   linktree:::check_fromto(from, to)
   ttab <- linktree:::ttable(from, to, levels)
   levels <- rownames(ttab)
 
-  # Observed
-  observed_numerator <- ttab[infector, infectee]
-  observed_denominator <- sum(ttab[, infectee])
+  observed_numerator <- diag(ttab)
+  observed_denominator <- colSums(ttab)
   observed_ratio <- observed_numerator / observed_denominator
+  phi <- draw_phi(from, to, levels, from_id, to_id, n_samples)
 
-  # Expected
-  n_cases <- table(factor(
-    unique(na.omit(cbind(
-      c(from, to), c(from_id, to_id)
-    )))[, 1],
-    levels = levels
-  ))
-  expected_numerator <- n_cases[[infector]] - 1
-  expected_denominator <- sum(n_cases) - 1
-  expected_ratio <- expected_numerator / expected_denominator
+  rho <- vapply(levels, function(i) {
+    linktree::gamma2delta(observed_ratio[i] / phi[, i])
+  }, FUN.VALUE = numeric(n_samples), USE.NAMES = TRUE)
 
-  return(observed_ratio / expected_ratio)
-}
-
-# Note there is no uncertainty here: n_samples is ignored (only to be consistent with the other draw_* functions)
-# diag is a logical indicating whether the diagonal elements should be returned
-# This is for compatibility with the other draw_* functions (comparison with gamma/delta)
-draw_rho <- function(from, to, levels = NULL, n_samples = 1, args) {
-  from_id <- args$from_id
-  to_id <- args$to_id
-  diag <- args$diag
-
-  levels <- rownames(linktree:::ttable(from, to, levels))
-  grid_levels <- expand.grid(from = levels, to = levels)
-
-  rho <- matrix(
-    apply(grid_levels, 1, function(x) {
-      rho_formula(from, to, levels, from_id, to_id, x[1], x[2])
-    }),
-    nrow = length(levels), ncol = length(levels),
-    dimnames = list(levels, levels)
-  )
-  if (diag) {
-    rho <- diag(rho)
-  }
   return(rho)
 }
 
 # This is where the uncertainty lies, all subsequent draw_* functions derive their values from draw_pi
-draw_pi <- function(from, to, levels = NULL, n_samples = 1000, args = NULL) {
+draw_pi <- function(from,
+                    to,
+                    levels = NULL,
+                    n_samples = 1000,
+                    args = NULL) {
   linktree:::check_fromto(from, to)
   ttab <- linktree:::ttable(from, to, levels)
   levels <- rownames(ttab)
@@ -72,11 +85,14 @@ draw_pi <- function(from, to, levels = NULL, n_samples = 1000, args = NULL) {
       rbeta(n_samples, success[i] + 1, trial[i] - success[i] + 1)
     }
   }, FUN.VALUE = numeric(n_samples))
-  # matrix(pi_values, nrow = n_samples, ncol = length(levels), byrow = FALSE)
   return(pi)
 }
 
-draw_gamma <- function(from, to, levels = NULL, n_samples = 1000, args) {
+draw_gamma <- function(from,
+                       to,
+                       levels = NULL,
+                       n_samples = 1000,
+                       args) {
   f <- args$f
 
   levels <- names(f)
@@ -90,7 +106,11 @@ draw_gamma <- function(from, to, levels = NULL, n_samples = 1000, args) {
   return(gamma)
 }
 
-draw_delta <- function(from, to, levels = NULL, n_samples = 1000, args) {
+draw_delta <- function(from,
+                       to,
+                       levels = NULL,
+                       n_samples = 1000,
+                       args) {
   gamma <- draw_gamma(from, to, levels, n_samples, args)
   delta <- apply(gamma, 2, function(x) {
     linktree::gamma2delta(x)
@@ -104,7 +124,11 @@ R0_formula <- function(tau, gamma, f, n_cases) {
   return(numerator / denominator)
 }
 
-draw_R0 <- function(from, to, levels = NULL, n_samples = 1000, args) {
+draw_R0 <- function(from,
+                    to,
+                    levels = NULL,
+                    n_samples = 1000,
+                    args) {
   f <- args$f
   from_id <- args$from_id
   to_id <- args$to_id
@@ -112,57 +136,71 @@ draw_R0 <- function(from, to, levels = NULL, n_samples = 1000, args) {
   ttab <- linktree:::ttable(from, to, levels)
   levels <- rownames(ttab)
 
-  n_cases <- table(factor(
-    unique(na.omit(cbind(
-      c(from, to), c(from_id, to_id)
-    )))[, 1],
-    levels = levels
-  ))
+  n_cases <- table(factor(unique(na.omit(cbind(
+    c(from, to), c(from_id, to_id)
+  )))[, 1], levels = levels))
 
   gamma <- draw_gamma(from, to, levels, n_samples, args["f"])
   diag <- diag(ttab)
   R0 <- vapply(levels, function(l) {
-    R0_formula(tau = diag[[l]], gamma = gamma[, l], f = f[[l]], n_cases = n_cases[[l]])
+    R0_formula(
+      tau = diag[[l]],
+      gamma = gamma[, l],
+      f = f[[l]],
+      n_cases = n_cases[[l]]
+    )
   }, FUN.VALUE = numeric(n_samples))
 
   return(R0)
 }
 
 
-draw_array <- function(from_col, to_col, levels, trees, draw_function, args = list(), n_samples = 1000) {
+draw_array <- function(from_col,
+                       to_col,
+                       levels,
+                       trees,
+                       draw_function,
+                       args = list(),
+                       n_samples = 1000) {
   # Check inputs
-  if (!is.function(draw_function)) stop("draw_function must be a function")
-  if (!is.list(args)) stop("args must be a list")
-  if (length(levels) < 2) stop("There must be at least two group levels in the data")
-  if (length(unique(vapply(trees, length, FUN.VALUE = integer(1))))>1) stop("All trees must have the same length")
+  if (!is.function(draw_function))
+    stop("draw_function must be a function")
+  if (!is.list(args))
+    stop("args must be a list")
+  if (length(levels) < 2)
+    stop("There must be at least two group levels in the data")
+  if (length(unique(vapply(trees, length, FUN.VALUE = integer(1)))) > 1)
+    stop("All trees must have the same length")
 
   N <- n_samples
   L <- length(levels)
   Tr <- length(trees[[1]])
   C <- length(trees)
 
-  dimnames <- list("sample" = NULL, "level" = levels, "tree" = NULL, "cutoff" = NULL)
+  dimnames <- list(
+    "sample" = NULL,
+    "level" = levels,
+    "tree" = NULL,
+    "cutoff" = NULL
+  )
   result <- array(NA_real_, dim = c(N, L, Tr, C), dimnames = dimnames)
   draw_results <-
-    furrr::future_map(unlist(trees, recursive = FALSE),
-                      function(tree) {
-                        if ("from_id" %in% names(args) && "to_id" %in% names(args)) {
-                          args$from_id <- tree[[args$from_id]]
-                          args$to_id <- tree[[args$to_id]]
-                        }
+    furrr::future_map(unlist(trees, recursive = FALSE), function(tree) {
+      if ("from_id" %in% names(args) && "to_id" %in% names(args)) {
+        args$from_id <- tree[[args$from_id]]
+        args$to_id <- tree[[args$to_id]]
+      }
 
-                        arg_list <- list(
-                          from = tree[[from_col]],
-                          to = tree[[to_col]],
-                          levels = levels,
-                          n_samples = N,
-                          args = args
-                        )
+      arg_list <- list(
+        from = tree[[from_col]],
+        to = tree[[to_col]],
+        levels = levels,
+        n_samples = N,
+        args = args
+      )
 
-                        do.call(draw_function, arg_list)
-                      },
-                      .options = furrr::furrr_options(seed = TRUE)
-    )
+      do.call(draw_function, arg_list)
+    }, .options = furrr::furrr_options(seed = TRUE))
   result[] <- unlist(draw_results)
 
   return(result)
@@ -175,7 +213,11 @@ draw_CrI <- function(array, dims, alpha = 0.05) {
     x <- x[!is.na(x)] # Remove NAs
     mean_x <- mean(x)
     quantiles <- quantile(x, probs = c(alpha / 2, 1 - alpha / 2))
-    return(c(mean = mean_x, lwr = quantiles[[1]], upr = quantiles[[2]]))
+    return(c(
+      mean = mean_x,
+      lwr = quantiles[[1]],
+      upr = quantiles[[2]]
+    ))
   }
   CrI_data <- apply(array, dims, compute_CrI, alpha = alpha)
   return(CrI_data)

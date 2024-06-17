@@ -33,8 +33,8 @@ loadbreaker_helper <- function(paper, cutoff_date) {
           interval = 1
         )
       } else if (name == "incubation_period") {
-        meanlog <- log(x$mu^2 / sqrt(x$sd^2 + x$mu^2))
-        sdlog <- sqrt(log(1 + (x$sd^2 / x$mu^2)))
+        meanlog <- log(x$mu ^ 2 / sqrt(x$sd ^ 2 + x$mu ^ 2))
+        sdlog <- sqrt(log(1 + (x$sd ^ 2 / x$mu ^ 2)))
         x$dist <- distcrete::distcrete(
           "lnorm",
           meanlog = meanlog,
@@ -50,21 +50,22 @@ loadbreaker_helper <- function(paper, cutoff_date) {
 
   # Prior -------------------------------------------------------------------
   min_pi <- ifelse(paper == "eLife2022", 0.55, 0.75)
-  prior_list <- list(pi = function(x) {
-    ifelse(x$pi > min_pi, log(1 / (1 - min_pi)), log(0))
-  })
+  prior_list <- list(
+    pi = function(x) {
+      ifelse(x$pi > min_pi, log(1 / (1 - min_pi)), log(0))
+    }
+  )
 
   # Config ------------------------------------------------------------------
   max_kappa <- ifelse(paper == "eLife2022", 3, 2)
+  init_pi <- ifelse(paper == "eLife2022", 0.60, 0.80)
   config_list <- list(
     n_iter = 5e5,
     sample_every = 500,
     max_kappa = max_kappa,
-    # missed no cases
     init_kappa = 1,
-    # number of generations before the last sampled ancestor
     move_kappa = TRUE,
-    init_pi = 0.8,
+    init_pi = init_pi,
     move_pi = TRUE,
     init_tree = "star",
     outlier_threshold = 2
@@ -73,46 +74,34 @@ loadbreaker_helper <- function(paper, cutoff_date) {
 
   # Data -------------------------------------------------------------------
   input_path <- here::here("data", paper, "input/")
-  data_list <- list(
-    dna = read.dna(
-      here(input_path, "dna.fasta"),
-      skip = 0,
-      format = "fasta"
-    ),
-    linelist = readRDS(here(input_path, "linelist.rds")) %>%
-      filter(onset <= cutoff_date) %>%
-      arrange(onset)
-  )
 
-  # Reorder DNA sequences
-  matching_indices <-
-    match(data_list$linelist$case_id, rownames(data_list$dna))
-  # Remove unmatched sequences
-  data_list$dna <- data_list$dna[matching_indices, ]
-  # Date as integer
-  # data_list$linelist$onset <-
-  #   as.Date(data_list$linelist$onset, format = "%Y-%m-%d")
-  data_list$linelist$date_integer <-
-    as.integer(difftime(
-      data_list$linelist$onset,
-      min(data_list$linelist$onset),
-      units = "days"
-    ))
+  linelist <- readRDS(here(input_path, "linelist.rds")) %>%
+    filter(onset <= cutoff_date) %>%
+    arrange(onset) %>%
+    mutate(date_integer = as.integer(difftime(onset, min(onset), units = "days")))
 
+  ctd <- readRDS(here(input_path, "contacts.rds")) %>%
+    filter(from_id %in% linelist$case_id & to_id %in% linelist$case_id) %>%
+    filter(from_id != to_id) %>%
+    #unique combinations of contacts
+    mutate(combination = paste(pmin(from_id, to_id), pmax(from_id, to_id))) %>%
+    distinct(combination, .keep_all = TRUE) %>%
+    select(-combination)
+
+  dna <- read.dna(here(input_path, "dna.fasta"), skip = 0, format = "fasta")
+  dna <- dna[match(linelist$case_id, rownames(dna)), ]
 
   # outbreaker format ----------------------------------------------------------------
-  return(
-    list(
-      data = outbreaker_data(
-        dates = data_list$linelist$date_integer,
-        dna = data_list$dna,
-        ids = data_list$linelist$case_id,
-        w_dens = distribution_list$incubation_period$dist$d(1:50),
-        f_dens = distribution_list$serial_interval$dist$d(1:50)
-      ),
-      config = create_config(config_list),
-      priors = custom_priors(pi = prior_list$pi)
-    )
-  )
+  return(list(
+    data = outbreaker_data(
+      dates = linelist$date_integer,
+      dna = dna,
+      ids = linelist$case_id,
+      ctd = if (nrow(ctd) > 1) ctd else NULL,
+      w_dens = distribution_list$incubation_period$dist$d(1:50),
+      f_dens = distribution_list$serial_interval$dist$d(1:50)
+    ),
+    config = create_config(config_list),
+    priors = custom_priors(pi = prior_list$pi)
+  ))
 }
-

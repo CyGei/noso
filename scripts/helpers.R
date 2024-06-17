@@ -6,7 +6,7 @@ load_libraries <- function() {
   if (!require("pacman")) {
     install.packages("pacman")
   }
-  pacman::p_load(here, outbreaker2, tidyverse, purrr, furrr, reshape2)
+  pacman::p_load(here, outbreaker2, tidyverse, purrr, furrr, reshape2, cowplot)
   pacman::p_load_gh("CyGei/linktree")
 }
 
@@ -138,6 +138,8 @@ filter_alpha_by_kappa <- function(out, kappa_threshold) {
 #' The additional arguments should be vectors of values, and the name of the argument will be used as the name of the additional column. The additional columns will be named 'from_' and 'to_' followed by the name of the argument.
 #'
 #' @param out  A data frame of class "outbreaker_chains".
+#' @param ids  A vector of IDs from the original linelist.
+#' @param kappa A logical value indicating whether to include the kappa values in the output.
 #' @param ... Additional columns from the original linelist to include. Each argument should be an atomic vector of values, and the name of the argument will be used as the name of the additional column.
 #'
 #' @return A list of data frames. Each data frame has 'from' and 'to' columns,
@@ -149,7 +151,7 @@ filter_alpha_by_kappa <- function(out, kappa_threshold) {
 #' get_trees(out, ids = ids, group = group, dates = dates)
 #' }
 #'
-get_trees <- function(out, ids, ...) {
+get_trees <- function(out, ids, kappa = FALSE, t_inf = FALSE, ...) {
   # Check inputs
   stopifnot(is.data.frame(out))
   args <- list(...)
@@ -160,12 +162,14 @@ get_trees <- function(out, ids, ...) {
 
   # Retrieve all columns starting with alpha_
   alpha_cols <- grep("^alpha_", names(out), value = TRUE)
-  out <- out[, alpha_cols]
   to <- gsub("alpha_", "", alpha_cols)
+
+  kappa_cols <- grep("^kappa_", names(out), value = TRUE)
+  t_inf_cols <- grep("^t_inf_", names(out), value = TRUE)
 
   # Create a list of data frames, each with 'from' and 'to' columns
   tree_list <- lapply(seq_len(nrow(out)), function(i) {
-    from <- unlist(out[i, ], use.names = FALSE)
+    from <- unlist(out[i, alpha_cols], use.names = FALSE)
     if (is.integer(from)) {
       to <- as.integer(to)
     }
@@ -173,6 +177,13 @@ get_trees <- function(out, ids, ...) {
     df <- data.frame(from = from,
                      to = to,
                      stringsAsFactors = FALSE)
+
+    if (kappa) {
+      df$kappa <- unlist(out[i, kappa_cols], use.names = FALSE)
+    }
+    if (t_inf) {
+      df$t_inf <- unlist(out[i, t_inf_cols], use.names = FALSE)
+    }
 
     # Add additional columns
     for (arg in names(args)) {

@@ -4,13 +4,9 @@
 # infected  causes on average in a population which is subject to a certain degree of immunity and intervention measures.
 # This is not applicable in real-time.
 
-# Instead we need to estimate the instantaneous reproduction Rt over time windows.
-# You can estimate Rt at time t only if you have data up to time t + SI.
-
-
 source(here::here("scripts", "helpers.R"))
 load_libraries()
-paper <- c("JHI2021", "eLife2022")[2] #chose which paper to run
+paper <- c("JHI2021", "eLife2022")[1] #chose which paper to run
 load_data(paper)
 output_path <- here::here("data", paper, "output")
 epicurve()
@@ -19,11 +15,11 @@ epicurve()
 trees <- out[[length(out)]] %>%
   filter(step > 500) %>%
   identify(ids = linelist$case_id) %>%
-  filter_alpha_by_kappa(1L) %>%
   get_trees(ids = linelist$case_id,
             group = linelist$group,
-            date = linelist$onset)
-
+            date = linelist$onset,
+            kappa = TRUE)
+#C218   C203  H2028
 get_Re <- function(linelist, tree, by_group = FALSE) {
   tree <- tree[!is.na(tree$from), ]
 
@@ -53,19 +49,17 @@ get_Re <- function(linelist, tree, by_group = FALSE) {
 }
 
 
-# Re: estimating R using 7 days time windows ------------------------------
+# Re: estimating R using 5/7 days time windows ------------------------------
 window <- ifelse(paper == "JHI2021", 5, 7)
 start <- min(linelist$onset) + window
 end <- max(linelist$onset)
-max_si <- 14
 cutoff_breaks <- c(seq.Date(start, end, by = window), end) %>% unique()
 
 pacman::p_load(furrr)
 plan(multisession, workers = length(cutoff_breaks))
 R_df <- furrr::future_map(cutoff_breaks, function(cutoff_break) {
-
-    window_start <- cutoff_break - window
-    window_end <- cutoff_break
+  window_start <- cutoff_break - window
+  window_end <- cutoff_break
 
   R <- lapply(trees, function(tree) {
     cut_tree <-
@@ -76,7 +70,7 @@ R_df <- furrr::future_map(cutoff_breaks, function(cutoff_break) {
 
     cut_linelist <- linelist %>%
       filter(onset >= window_start &
-                onset <= window_end)
+               onset <= window_end)
 
     get_Re(cut_linelist, cut_tree, by_group = TRUE)
   }) %>%
@@ -149,91 +143,3 @@ cowplot::plot_grid(
   labels = "AUTO"
 )
 
-
-
-# Estimate the average number of introductions per time window ------------
-
-intro_df <- furrr::future_map(cutoff_breaks, function(cutoff_break) {
-  window_start <- cutoff_break - window
-  window_end <- cutoff_break
-
-  intros <- lapply(trees, function(tree) {
-    cut_tree <-
-      tree %>%
-      filter((from_date >= window_start & from_date <= window_end) |
-               is.na(from_date) &
-               to_date >= window_start & to_date <= window_end
-      )
-    intro <- cut_tree %>%
-      group_by(to_group) %>%
-      summarise(n_intros = sum(is.na(from)), .groups = "drop") %>%
-      mutate(window_start = window_start, window_end = window_end)
-    return(intro)
-  }) %>%
-    bind_rows()
-
-  return(intros)
-}) %>%
-  bind_rows(.id = "window_id") %>%
-  mutate(window_median = window_start + as.numeric(window_end - window_start) / 2)
-
-intro_summary <- intro_df %>%
-  group_by(to_group, window_id) %>%
-  summarise(
-    mean = mean(n_intros),
-    lwr = quantile(n_intros, 0.025),
-    upr = quantile(n_intros, 0.975),
-    window_start = first(window_start),
-    window_end = first(window_end),
-    window_median = first(window_median),
-    .groups = "drop"
-  ) %>%
-  group_by(window_id) %>%
-  mutate(global_intro = sum(mean)) %>%
-  ungroup()
-
-p_intros <- intro_df %>%
-  ggplot(aes(
-    x = window_median,
-    y = n_intros,
-    fill = to_group,
-    group = interaction(to_group, window_id)
-  )) +
-  geom_errorbarh(
-    data = intro_summary,
-    aes(xmin = window_start, xmax = window_end, y = global_intro),
-    height = 0.05,
-    linetype = "solid",
-    col = "#636363"
-  ) +
-  geom_violin(
-    adjust = 1.8,
-    col = NA,
-    position = position_dodge(width = 4),
-    alpha = 0.7
-  ) +
-  geom_pointrange(
-    data = intro_summary,
-    aes(
-      x = window_median,
-      y = mean,
-      ymin = lwr,
-      ymax = upr,
-    ),
-    position = position_dodge(width = 4),
-    pch = 21,
-    stroke = 0.5,
-    size = 0.75
-  ) +
-  theme_noso(day_break = 7, date = TRUE) +
-  labs(x = "", y = "introductions")
-
-
-cowplot::plot_grid(
-  p_intros + theme(legend.position = "none"),
-  epicurve(day_break = 7),
-  ncol = 1,
-  rel_heights = c(2, 1.5),
-  align = "v",
-  labels = "AUTO"
-)

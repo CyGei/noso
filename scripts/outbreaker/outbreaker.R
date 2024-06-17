@@ -11,46 +11,40 @@ for (paper in papers) {
   dir.create(output_path, showWarnings = FALSE)
 
   input <- loadbreaker(paper)
-  workers <- future::availableCores() - 1
+  workers <- future::availableCores() - 2
   future::plan(future::multisession, workers = workers)
 
-  f_null <- function(data, param) {
-    return(0.0)
-  }
-
   set.seed(123)
-
-  furrr::future_walk(input, function(x) {
+ # using rev to first launch the largest dataset
+  furrr::future_walk(rev(seq_along(input)), function(i) {
+    message("Processing: ", i)
+    x <- input[[i]]
     outbreaker_output <- outbreaker2::outbreaker(
       data = x$data,
       config = x$config,
-      priors = x$priors,
-      likelihoods = custom_likelihoods(
-        contact = f_null,
-        timing_sampling = f_null
-      )
+      priors = x$priors
     )
-
     # Save output for the current cutoff date
     cutoff_date <- unique(max(x$data$dates))
     saveRDS(outbreaker_output, here::here(output_path, paste0("outbreaker_", cutoff_date, ".rds")))
+    message("Completed: ", i)
+
   }, .options = furrr::furrr_options(seed = TRUE))
 }
-
 
 # Trace plots for the outbreaker2 results
 paper <- papers[2]
 input_path <- here::here("data", paper, "output/outbreaker")
 cutoff_dates <- loadcutoff_dates(paper)
 results <- furrr::future_map(
-  .x = list.files(input_path, full.names = TRUE),
+  .x = list.files(input_path, pattern = "outbreaker_.*.rds", full.names = TRUE),
   ~ readRDS(.x) %>%
     mutate(cutoff = as.integer(gsub(".*outbreaker_(.*).rds", "\\1", .x)),
            cutoff_date = cutoff_dates[cutoff+1])
 )
 pacman::p_load(ggplot2)
 trace <- function(x) {
-  ggplot(data = bind_rows(results),
+  ggplot(data = bind_rows(results[-1]),
          aes(x = step, y = !!sym(x),
              col = cutoff_date, group = cutoff_date)) +
     geom_line(alpha = 0.5, linewidth = 0.5)+
@@ -67,7 +61,9 @@ grid <- cowplot::plot_grid(
   trace("like") + labs(x = "") + theme(legend.position = "none"),
   trace("mu") + theme(legend.position = "none"),
   trace("pi") + theme(legend.position = "none"),
-  nrow = 2,
+  trace("eps") + theme(legend.position = "none"),
+  trace("lambda") + theme(legend.position = "none"),
+  nrow = 3,
   align = "v"
 )
 cowplot::plot_grid(
@@ -76,3 +72,27 @@ cowplot::plot_grid(
   nrow = 2,
   rel_heights = c(1, 0.2)
 )
+
+
+
+# Gelman Rubin test -------------------------------------------------------
+# pacman::p_load(coda)
+# archive_results <- furrr::future_map(
+#   .x = list.files(here::here("data", paper, "output/outbreaker/archive"), pattern = "outbreaker_.*.rds", full.names = TRUE),
+#   ~ readRDS(.x) %>%
+#     mutate(cutoff = as.integer(gsub(".*outbreaker_(.*).rds", "\\1", .x)),
+#            cutoff_date = cutoff_dates[cutoff+1])
+# )
+#
+# archive_chain <- archive_results[[length(archive_results)]] %>%
+#   select(mu, eps, lambda) %>%
+#   as.matrix() %>%
+#   as.mcmc()
+#
+# results_chain <- results[[length(results)]] %>%
+#   select(mu, eps, lambda) %>%
+#   as.matrix() %>%
+#   as.mcmc()
+#
+#
+# gelman.diag(coda::mcmc.list(archive_chain, results_chain))

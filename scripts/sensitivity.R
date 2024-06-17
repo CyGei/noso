@@ -25,14 +25,7 @@ trees <- furrr::future_map(seq_along(cutoff_dates), function(x) {
 # Sensitivity in fHCW --------------------------------------------------------------------
 f_seq <- seq(0.1, 0.9, 0.1)
 pacman::p_load(furrr)
-future::plan(list(
-  future::tweak(future::multisession, workers = length(f_seq)),
-  future::tweak(
-    future::multisession,
-    workers = future::availableCores() - (length(f_seq) + 1)
-  )
-))
-
+future::plan(future::multisession, workers = length(f_seq))
 set.seed(123)
 df_sensitivity <- furrr::future_map(f_seq, function(fHCW) {
   array <- draw_array(
@@ -44,8 +37,7 @@ df_sensitivity <- furrr::future_map(f_seq, function(fHCW) {
     args = list(
       f = c("hcw" = fHCW, "patient" = 1 - fHCW),
       from_id = "from",
-      to_id = "to",
-      diag = TRUE
+      to_id = "to"
     ),
     n_samples = 1000
   )
@@ -86,6 +78,14 @@ df_sensitivity <- readRDS(here::here(output_path, "df_sensitivity.rds"))
 
 
 # Plot --------------------------------------------------------------------
+cutoff_breaks <- cutoff_dates[seq(1, length(cutoff_dates), 4)]
+day_month <- format(cutoff_breaks, "%d\n%B")
+day <- format(cutoff_breaks, "%d")
+dup <- which(duplicated(format(cutoff_breaks, "%b")))
+day_month[dup] <- day[dup]
+day_month[1] <- "11 \n    March"
+day_month[12] <- "06 \nMay    "
+
 
 bind_rows(df_sensitivity) %>%
   mutate(
@@ -119,7 +119,6 @@ bind_rows(df_sensitivity) %>%
     show.legend = FALSE,
     linewidth = 0.65
   ) +
-  geom_hline(aes(yintercept = 0), linetype = "dashed") +
   geom_errorbar(position = position_dodge(width = 0.5),
                 width = 0.5,
                 linewidth = 0.5) +
@@ -130,6 +129,7 @@ bind_rows(df_sensitivity) %>%
     fill = "white",
     alpha = 0.9
   ) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
   scale_shape_manual(values =
                        c("significant" = 16, "not significant" = 21)) +
   theme_noso() +
@@ -157,18 +157,8 @@ bind_rows(df_sensitivity) %>%
     # break 1 every other 2 cutoff_date
     breaks = cutoff_breaks,
     labels = day_month,
-    expand = c(0.01, 0.01)
-  )+
-  theme(axis.text.x=element_text(hjust=
-                                   c(0,
-                                     rep(0.5, length(cutoff_breaks - 2)),1)
-                                 ))
-
-cutoff_breaks <- cutoff_dates[seq(1, length(cutoff_dates), 4)]
-day_month <- format(cutoff_breaks, "%d\n%B")
-day <- format(cutoff_breaks, "%d")
-dup <- which(duplicated(format(cutoff_breaks, "%b")))
-day_month[dup] <- day[dup]
+    expand = c(0.01, 0.5)
+  )
 
 
 # Sensitivity -------------------------------------------------------------

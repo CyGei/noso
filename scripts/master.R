@@ -1,11 +1,10 @@
 source(here::here("scripts", "helpers.R"))
 load_libraries()
-paper <- c("JHI2021", "eLife2022")[2] #chose which paper to run
+paper <- c("JHI2021", "eLife2022")[1] #chose which paper to run
 load_data(paper)
 output_path <- here::here("data", paper, "output")
 
 epicurve()
-plan(multisession, workers = availableCores())
 trees <- furrr::future_map(seq_along(cutoff_dates), function(x) {
   linelist_cut <- linelist %>%
     filter(onset <= cutoff_dates[x])
@@ -31,13 +30,16 @@ linelist %>%
 # Compute array -----------------------------------------------------------
 metrics <- list("delta" = draw_delta, "rho" = draw_rho)
 
-future::plan(list(
-  future::tweak(future::multisession, workers = length(metrics)),
-  future::tweak(
-    future::multisession,
-    workers = future::availableCores() - (length(metrics) + 2)
-  )
-))
+# future::plan(list(
+#   future::tweak(future::multisession, workers = length(metrics)),
+#   future::tweak(
+#     future::multisession,
+#     workers = future::availableCores() - (length(metrics) + 2L)
+#   )
+# ))
+#
+future::plan(future::multisession, workers = length(metrics))
+
 fHCW <- 0.33
 set.seed(123)
 system.time({
@@ -51,10 +53,9 @@ system.time({
       args = list(
         f = c("hcw" = fHCW, "patient" = 1 - fHCW),
         from_id = "from",
-        to_id = "to",
-        diag = TRUE
+        to_id = "to"
       ),
-      n_samples = ifelse(metric_name == "rho", 1, 1000)
+      n_samples = 1000
     )
   }, .options = furrr_options(
     seed = TRUE,
@@ -71,10 +72,6 @@ saveRDS(array, here::here(output_path, "array.rds"))
 
 # Compute credible intervals ----------------------------------------------
 array <- readRDS(here::here(output_path, "array.rds"))
-
-#rescale rho values with gamma2delta()
-rho_idx <- which(names(metrics) == "rho")
-array[[rho_idx]] <- apply(array[[rho_idx]], 1:4, gamma2delta)
 
 df <-
   reshape2::melt(array) %>%
