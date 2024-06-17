@@ -284,6 +284,7 @@ theme_noso <- function(day_break = 2,
     },
     if (date) {
       cutoff_breaks <- seq(min(linelist$onset), max(linelist$onset), by = day_break)
+      cutoff_breaks <- unique(c(cutoff_breaks, max(linelist$onset)))
       day_month <- format(cutoff_breaks, "%d\n%B")
       day <- format(cutoff_breaks, "%d")
       dup <- which(duplicated(format(cutoff_breaks, "%b")))
