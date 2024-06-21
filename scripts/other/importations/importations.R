@@ -1,9 +1,5 @@
-source(here::here("scripts", "helpers.R"))
-source(here::here("scripts/other/importations", "helpers.R"))
-load_libraries()
-paper <- c("JHI2021", "eLife2022")[1] #chose which paper to run
-load_data(paper)
-output_path <- here::here("data", paper, "output")
+load_helpers()
+load_paper()
 epicurve()
 out <- out[[length(out)]]
 # Total Introductions
@@ -60,16 +56,20 @@ imports_df %>%
     fill = to_group,
     group = interaction(to_group, window_median)
   )) +
-  # geom_errorbarh(
-  #   data = imports_summary %>%
-  #     filter(to_group == "global"),
-  #   aes(xmin = window_start,
-  #       xmax = window_end,
-  #       y = mean,
-  #       height = 0),
-  #   size = 0.25
-  # ) +
+  geom_errorbarh(
+    data = imports_summary %>%
+      filter(to_group == "global"),
+    aes(xmin = window_start - 0.5,
+        xmax = window_end + 0.5,
+        y = mean,
+        height = 0),
+    #size = 0.3,
+    height = 0.1
+  ) +
   geom_violin(position = position_dodge(width = 3),
+              kernel = "rectangular",
+              adjust = 0.6,
+              alpha = 0.7,
               col = NA,
               scale = "width") +
   geom_pointrange(
@@ -99,20 +99,36 @@ imports_df %>%
       "patient" = "Patient"
     )
   ) +
-  coord_cartesian(ylim = c(0, 8)) +
+  coord_cartesian(ylim = c(0, 6)) +
   labs(x = "", y = "Importations",
        fill = "")
 
+p_main <- cowplot::plot_grid(
+  epicurve(day_break = window) + labs(x = "") + theme(legend.position = "none"),
+  NULL,
+  p_imports + theme(legend.position = "none"),
+  ncol = 1,
+  rel_heights = c(1.5,-0.12, 2),
+  align = "v",
+  labels = c("A","", "B")
+)
+p_legends <-
+  cowplot::plot_grid(
+    peak_legend(),
+    NULL,
+    cowplot::get_plot_component(p_imports, 'guide-box-bottom', return_all = TRUE),
+    nrow = 1,
+    rel_widths = c(1, -0.75, 1)
+  )
 
 cowplot::plot_grid(
-  p_imports + theme(legend.position = "none"),
-  epicurve(day_break = window),
-  ncol = 1,
-  rel_heights = c(2, 1.5),
-  align = "v",
-  labels = "AUTO"
+  p_main,
+  p_legends,
+  nrow = 2,
+  rel_heights = c(1, 0.1)
 )
-intro_summary %>% pull(mean) %>% sum()
+
+
 
 
 # #eLife2022: no introductions in the 1st 2 weeks!

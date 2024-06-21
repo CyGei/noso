@@ -1,10 +1,7 @@
-source(here::here("scripts", "helpers.R"))
-load_libraries()
-paper <- c("JHI2021", "eLife2022")[1] #chose which paper to run
-load_data(paper)
-output_path <- here::here("data", paper, "output")
-
+load_helpers()
+load_paper()
 epicurve()
+
 trees <- furrr::future_map(seq_along(cutoff_dates), function(x) {
   linelist_cut <- linelist %>%
     filter(onset <= cutoff_dates[x])
@@ -12,12 +9,13 @@ trees <- furrr::future_map(seq_along(cutoff_dates), function(x) {
   out[[x]] %>%
     filter(step > 500) %>%
     identify(ids = linelist_cut$case_id) %>%
-    filter_alpha_by_kappa(1L) %>%
     get_trees(
       ids = linelist_cut$case_id,
       group = linelist_cut$group,
-      date = linelist_cut$onset
-    )
+      date = linelist_cut$onset,
+      kappa = TRUE
+    ) %>%
+    map(~ .x %>% filter(kappa == 1))
 })
 
 linelist %>%
@@ -29,15 +27,6 @@ linelist %>%
 
 # Compute array -----------------------------------------------------------
 metrics <- list("delta" = draw_delta, "rho" = draw_rho)
-
-# future::plan(list(
-#   future::tweak(future::multisession, workers = length(metrics)),
-#   future::tweak(
-#     future::multisession,
-#     workers = future::availableCores() - (length(metrics) + 2L)
-#   )
-# ))
-#
 future::plan(future::multisession, workers = length(metrics))
 
 fHCW <- 0.33
@@ -122,21 +111,45 @@ p_metrics <- ggplot(df,
     labeller = label_parsed,
     strip.position = "left"
   ) +
+  geom_rect(
+    data =
+      inner_join(
+        df,
+        get_peak(linelist$onset, group = linelist$group),
+        by = c("level" = "group", "cutoff_date" =  "observed_peak")
+      ),
+    aes(
+      fill = level,
+      xmin = cutoff_date - 0.5,
+      xmax = cutoff_date + 0.5,
+      ymin = -10,
+      ymax = 10,
+    ),
+    col = NA,
+    alpha = 0.15,
+    show.legend = FALSE
+  ) +
   geom_hline(aes(yintercept = target), linetype = "dashed") +
   geom_errorbar(position = position_dodge(width = 0.5),
                 width = 0.5,
                 linewidth = 0.5) +
-  geom_point(aes(shape = significant),
-             position = position_dodge(width = 0.5),
-             size = 2.5,
-             fill = "white",
-             alpha = 0.9) +
+  geom_point(
+    aes(shape = significant),
+    position = position_dodge(width = 0.5),
+    size = 2.5,
+    fill = "white",
+    alpha = 0.9
+  ) +
   scale_shape_manual(values =
                        c("significant" = 16, "not significant" = 21)) +
-  theme_noso() +
-  labs(x = "", y = "") +
+  theme_noso(fill = TRUE) +
+  coord_cartesian(ylim = c(-1, 1)) +
+  labs(x = "",
+       y = "",
+       col = "",
+       shape = "") +
   theme(
-    legend.position = "none",
+    #legend.position = "none",
     strip.background = element_blank(),
     strip.placement = "outside",
     strip.text.y.left = element_text(
@@ -149,10 +162,38 @@ p_metrics <- ggplot(df,
   )
 
 cowplot::plot_grid(
-  p_metrics + theme(plot.margin = unit(c(0.1, 0.2, -1, 0), "lines")),
-  epicurve(facet = TRUE),
+  epicurve(facet = TRUE) + theme(legend.position = "none") + labs(x = ""),
+  p_metrics + theme(plot.margin = unit(c(0.1, 0.2, 0, 0), "lines")),
   align = "v",
   ncol = 1,
-  rel_heights = c(1, 0.7),
+  rel_heights = c(0.7, 1),
   labels = "AUTO"
 )
+
+
+# Final plot --------------------------------------------------------------
+p_metrics +
+  #to add the peak legend:
+  ggnewscale::new_scale_fill() +
+  geom_rect(
+    data = tibble(
+      x = as.Date("2020-01-01"),
+      y = -Inf,
+      fill = "Peak"
+    ),
+    aes(
+      x = x,
+      y = y,
+      fill = fill,
+      group = fill,
+      xend = x,
+      yend = x,
+      xmin = x,
+      xmax = x,
+      ymax = x,
+      ymin = x
+    ),
+    alpha = 0.3,
+    col = NA
+  ) +
+  scale_fill_manual("", values = c("Peak" = "black"))

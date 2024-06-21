@@ -17,36 +17,30 @@ loadbreaker <- function(paper) {
 
 loadbreaker_helper <- function(paper, cutoff_date) {
   # Parameters ---------------------------------------------------------
-  distribution_list <- list(
-    serial_interval = list(mu = 3.0, sd = 4.1),
-    incubation_period = list(mu = 5.95, sd = 4.31)
-  ) %>%
-    purrr::imap(function(x, name) {
-      if (name == "serial_interval") {
-        x$cv <- x$sd / x$mu
-        x$shape_scale <- epitrix::gamma_mucv2shapescale(x$mu, x$cv)
-        x$dist <- distcrete::distcrete(
-          "gamma",
-          shape = x$shape_scale$shape,
-          scale = x$shape_scale$scale,
-          w = 0.5,
-          interval = 1
-        )
-      } else if (name == "incubation_period") {
-        meanlog <- log(x$mu ^ 2 / sqrt(x$sd ^ 2 + x$mu ^ 2))
-        sdlog <- sqrt(log(1 + (x$sd ^ 2 / x$mu ^ 2)))
-        x$dist <- distcrete::distcrete(
-          "lnorm",
-          meanlog = meanlog,
-          sdlog = sdlog,
-          w = 0.5,
-          interval = 1
-        )
-      }
+  si_mu <- 3.0
+  si_sd <- 4.1
+  si_cv <- si_sd / si_mu
+  si_params <- gamma_mucv2shapescale(si_mu, si_cv)
+  si <- distcrete::distcrete(
+    "gamma",
+    shape = si_params$shape,
+    scale = si_params$scale,
+    w = 0.5,
+    interval = 1
+  )
 
-      x
-    })
 
+  incub_mu <- 5.95
+  incub_sd <- 4.31
+  incub_cv <- incub_sd / incub_mu
+  incub_params <- gamma_mucv2shapescale(incub_mu, incub_cv)
+  incub <- distcrete::distcrete(
+    "gamma",
+    shape = incub_params$shape,
+    scale = incub_params$scale,
+    w = 0.5,
+    interval = 1
+  )
 
   # Prior -------------------------------------------------------------------
   min_pi <- ifelse(paper == "eLife2022", 0.55, 0.75)
@@ -76,32 +70,60 @@ loadbreaker_helper <- function(paper, cutoff_date) {
   input_path <- here::here("data", paper, "input/")
 
   linelist <- readRDS(here(input_path, "linelist.rds")) %>%
-    filter(onset <= cutoff_date) %>%
-    arrange(onset) %>%
-    mutate(date_integer = as.integer(difftime(onset, min(onset), units = "days")))
+    filter(onset <= cutoff_date)
+  # %>%
+  #   arrange(onset)
+  # %>%
+  #   mutate(date_integer = as.integer(difftime(onset, min(onset), units = "days")))
 
   ctd <- readRDS(here(input_path, "contacts.rds")) %>%
-    filter(from_id %in% linelist$case_id & to_id %in% linelist$case_id) %>%
-    filter(from_id != to_id) %>%
-    #unique combinations of contacts
-    mutate(combination = paste(pmin(from_id, to_id), pmax(from_id, to_id))) %>%
-    distinct(combination, .keep_all = TRUE) %>%
-    select(-combination)
+    filter(from_id %in% linelist$case_id &
+             to_id %in% linelist$case_id) %>%
+    filter(from_id != to_id)
+  # %>%
+  #   #unique combinations of contacts
+  #   mutate(combination = paste(pmin(from_id, to_id), pmax(from_id, to_id))) %>%
+  #   distinct(combination, .keep_all = TRUE) %>%
+  #   select(-combination)
 
-  dna <- read.dna(here(input_path, "dna.fasta"), skip = 0, format = "fasta")
+  # if eLife paper remove id C123 in the contacts
+  if (paper == "eLife2022") {
+    ctd <- ctd %>% filter(from_id != "C123" & to_id != "C123")
+  }
+
+  if (nrow(ctd) <= 1) {
+    ctd <- NULL
+  } else{
+    ctd <- epicontacts::make_epicontacts(
+      linelist = linelist,
+      contacts = ctd,
+      id = "case_id",
+      from = "from_id",
+      to = "to_id",
+      directed = TRUE
+    )
+  }
+
+
+  dna <- read.dna(here(input_path, "dna.fasta"),
+                  skip = 0,
+                  format = "fasta")
   dna <- dna[match(linelist$case_id, rownames(dna)), ]
 
   # outbreaker format ----------------------------------------------------------------
-  return(list(
-    data = outbreaker_data(
-      dates = linelist$date_integer,
-      dna = dna,
-      ids = linelist$case_id,
-      ctd = if (nrow(ctd) > 1) ctd else NULL,
-      w_dens = distribution_list$incubation_period$dist$d(1:50),
-      f_dens = distribution_list$serial_interval$dist$d(1:50)
-    ),
-    config = create_config(config_list),
-    priors = custom_priors(pi = prior_list$pi)
-  ))
+  return(
+    list(
+      data = outbreaker_data(
+        ids = linelist$case_id,
+        dates = linelist$onset,
+        dna = dna,
+        ctd = ctd,
+        w_dens = si$d(1:20),
+        f_dens = incub$d(1:20)
+      ),
+      config = create_config(config_list),
+      priors = custom_priors(pi = prior_list$pi),
+      likelihoods = custom_likelihoods()
+    )
+  )
 }

@@ -1,22 +1,27 @@
-source(
-  here::here("scripts", "helpers.R")
-)
+source(here::here("scripts", "helpers.R"))
 load_libraries()
-load_data()
+paper <- c("JHI2021", "eLife2022")[1] #chose which paper to run
+load_data(paper)
+output_path <- here::here("data", paper, "output")
+epicurve()
 
-outbreaker_chains <- outbreaker_chains %>%
+#out <- readRDS(here("data", paper, "input", "out.rds"))
+# out <- readRDS(here::here("data", paper, "output", "out_cyril4.rds"))
+
+#final outbreaker run
+trees <-
+  out[[length(out)]] %>%
   filter(step > 500) %>%
-  identify(ids = linelist$case_id)
-outbreaker_chains <- filter_alpha_by_kappa(outbreaker_chains, 1)
+  identify(ids = linelist$case_id) %>%
+  get_trees(
+    ids = linelist$case_id,
+    group = linelist$group,
+    date = linelist$onset,
+    kappa = TRUE
+  ) %>%
+  map(~ .x %>% filter(kappa == 1))
 
-trees <- get_trees(
-  out = outbreaker_chains,
-  ids = linelist$case_id,
-  group = linelist$group,
-  date = linelist$onset_inferred
-)
-
-
+# Serial interval ----------------------------------------------------------------
 si_ecdf <- lapply(trees, function(x){
   si <- x %>%
     mutate(
@@ -48,9 +53,7 @@ si_ecdf %>%
   geom_line() +
   geom_vline(xintercept = 0, linetype = "dashed") +
   labs(x = "Serial Interval (days)", y = "Cumulative Probability") +
-  theme_noso(fill = F, col = F, date = F) +
-  scale_x_continuous(limits = c(-20, 30), breaks = seq(-20, 30, 5))
-
+  theme_noso(fill = F, col = F, date = F)
 
 
 

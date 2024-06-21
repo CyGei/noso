@@ -1,133 +1,127 @@
 # The purpose of this script is to estimate the reproduction number
 # using transmission chain data.
 # For each type of transmission.
-source(here::here("scripts", "helpers.R"))
-load_libraries()
-paper <- c("JHI2021", "eLife2022")[1]
-input_path <- here::here("data", paper, "input/")
-load_data(input_path)
-out <- out %>%
+load_helpers()
+load_paper()
+epicurve()
+trees <- out[[length(out)]] %>%
   filter(step > 500) %>%
-  identify(ids = linelist$case_id)
-out <- filter_alpha_by_kappa(out, 1L)
-
-trees <- get_trees(
-  out = out,
-  ids = linelist$case_id,
-  group = linelist$group,
-  date = linelist$onset
-)
-
-# get_R functions -------------------------------------------------------------
-
-get_Rematrix <- function(linelist, tree) {
-  tree <- tree[!is.na(tree$from), ]
-
-  cases <- table(linelist$group)
-  ttab <- linktree:::ttable(
-    from = tree$from_group,
-    to = tree$to_group,
-    levels = c("hcw", "patient")
-  )
-
-  Re <- as_tibble(ttab) %>%
-    left_join(as.data.frame(cases), by = c("from" = "Var1")) %>%
-    rename(cases = Freq) %>%
-    mutate(Re = n / cases)
-
-  #sweep(ttab, 1, cases, "/")
-  return(Re)
-}
-
-
+  identify(ids = linelist$case_id) %>%
+  get_trees(
+    out = .,
+    ids = linelist$case_id,
+    group = linelist$group,
+    date = linelist$onset,
+    kappa = TRUE
+  ) %>%
+  map(~ .x %>% filter(kappa == 1))
 
 
 # Analysis ----------------------------------------------------------------
-cutoff_dates_init <- cutoff_dates
-window <- 5
-cutoff_dates <- seq.Date(min(cutoff_dates_init),
-                         max(cutoff_dates_init),
-                         by = window) %>%
-  c(., max(cutoff_dates_init)) %>% unique()
+window <- ifelse(paper == "JHI2021", 5, 7)
+start <- min(linelist$onset)
+end <- max(linelist$onset)
+cutoff_breaks <- c(seq.Date(start, end, by = window), end) %>% unique()
 
-day_month <- format(cutoff_dates, "%d\n%B")
-day <- format(cutoff_dates, "%d")
-dup <- which(duplicated(format(cutoff_dates, "%b")))
-day_month[dup] <- day[dup]
+if (paper == "eLife2022") {
+  day_month <- format(cutoff_breaks, "%d\n%B")
+  day <- format(cutoff_breaks, "%d")
+  dup <- which(duplicated(format(cutoff_breaks, "%b")))
+  day_month[dup] <- day[dup]
+  day_month[1] <- "05 \n    March"
+  day_month[length(day_month)] <- "06 \nMay    "
 
-pacman::p_load(furrr)
-plan(multisession, workers = length(cutoff_dates))
+} else{
+  day_month <- format(cutoff_breaks, "%d\n%B")
+  day <- format(cutoff_breaks, "%d")
+  dup <- which(duplicated(format(cutoff_breaks, "%b")))
+  day_month[dup] <- day[dup]
+}
 
-R_df <- furrr::future_map(cutoff_dates[-1], function(cutoff_date) {
-  cutoff_date <- as.Date(cutoff_date)
-  R <- lapply(trees, function(tree) {
-    cut_tree <-
-      tree %>%
-      drop_na(from) %>%
-      mutate(from_date = as.Date(from_date)) %>%
-      filter(from_date >= (cutoff_date - window) &
-               from_date <= cutoff_date)
-
-    cut_linelist <- linelist %>%
-      filter(onset >= (cutoff_date - window) &
-               onset <= cutoff_date)
-
-    get_Rematrix(cut_linelist, cut_tree)
-  }) %>%
-    bind_rows() %>%
-    dplyr::mutate(window_end = cutoff_date, window_start = cutoff_date - window)
-}) %>%
-  bind_rows(.id = "window_id") %>%
+plan(multisession, workers = length(cutoff_breaks))
+Rematrix_df <- future_map_dfr(
+  seq_len(length(cutoff_breaks) - 1),
+  ~ process_window(
+    .x,
+    trees = trees,
+    cutoff_breaks = cutoff_breaks,
+    as_matrix = TRUE
+  )
+) %>%
   mutate(window_median = window_start + as.numeric(window_end - window_start) / 2)
 
+Reglobal_df <- future_map_dfr(
+  seq_len(length(cutoff_breaks) - 1),
+  ~ process_window(
+    .x,
+    trees = trees,
+    cutoff_breaks = cutoff_breaks,
+    by_group = TRUE,
+    as_matrix = FALSE
+  )
+) %>%
+  mutate(window_median = window_start + as.numeric(window_end - window_start) / 2)
+
+Re_df <- bind_rows(
+  Reglobal_df %>% rename(from = from_group) %>%
+    mutate(to = "overall") %>% select(from, to, window_median, window_start, window_end, Re),
+  Rematrix_df %>% select(from, to, window_median, window_start, window_end, Re)
+) %>%
+  mutate(to = factor(to, levels = c("overall", "hcw", "patient")),
+         from_label = as.factor("from"),
+         to_label = as.factor("to"))
 
 
-Rsummary <- R_df %>%
-  group_by(from, to, window_id) %>%
+Re_summary <- Re_df %>%
+  group_by(from, to, window_median, window_start, window_end) %>%
   drop_na(Re) %>%
   summarise(
     mean = mean(Re),
     lwr = quantile(Re, 0.025),
     upr = quantile(Re, 0.975),
-    window_start = first(window_start),
-    window_end = first(window_end),
-    window_median = first(window_median),
-    cases = first(cases),
     .groups = "drop"
   ) %>%
-  group_by(from, window_id) %>%
-  mutate(from_Re = sum(mean)) %>%
-  ungroup()
+  mutate(from_label = as.factor("from"),
+         to_label = as.factor("to"))
 
-p_Re <- R_df %>%
+p_Rematrix <- Re_df %>%
   ggplot(aes(
     x = window_median,
     y = Re,
-    group = interaction(from, to, window_id),
+    group = interaction(from, to, from_label, to_label, window_median),
   )) +
-  facet_grid(rows = vars(from),
-             cols = vars(to),
-             switch = "y") +
-  geom_hline(yintercept = 1, linetype = "dashed") +
+  # facet_grid(rows = vars(from),
+  #            cols = vars(as.factor(to)),
+  #            switch = "y") +
+  ggh4x::facet_nested(rows = vars(from_label, from),
+                      cols = vars(to_label,as.factor(to)),
+                      switch = "y") +
+  geom_hline(
+    data = tibble(
+      from = c("hcw", "patient", "hcw", "patient" , "hcw", "patient"),
+      to = c("overall", "overall", "hcw", "patient" , "patient", "hcw"),
+      yintercept = c(1, 1, 0.5, 0.5, 0.5, 0.5)
+    ) %>%
+      mutate(to = factor(to, levels = c("overall", "hcw", "patient")),
+             from_label = as.factor("from"),
+             to_label = as.factor("to")),
+    aes(yintercept = yintercept),
+    linetype = "dashed"
+  ) +
   geom_errorbarh(
-    data = Rsummary,
-    aes(
-      xmin = window_start,
-      xmax = window_end,
-      y = from_Re,
-      col = from
-    ),
-    height = 0.1,
-    linetype = "solid",
+    data = Re_summary,
+    aes(xmin = window_start, xmax = window_end, y = mean),
+    height = 0.1
   ) +
   geom_violin(
+    aes(fill = from),
+    col = NA,
     adjust = 1.8,
-    fill = "#636363",
     position = position_dodge(width = 4),
     alpha = 0.5,
     linewidth = 0.1
   ) +
-  geom_pointrange(data = Rsummary,
+  geom_pointrange(data = Re_summary,
                   aes(
                     x = window_median,
                     y = mean,
@@ -135,42 +129,29 @@ p_Re <- R_df %>%
                     ymax = upr,
                   ),
                   size = 0.4) +
-  scale_y_continuous(breaks = seq(0, 2, 0.5), position = "right") +
-  coord_cartesian(ylim = c(0, 2)) +
-  labs(x = "",
-       y = expression(R["e"]),
-       color = expression(paste("Group level ", R["e"]))) +
-  theme_noso(date = TRUE)+
-  scale_x_date(
-    breaks = cutoff_dates,
-    labels = day_month,
-    expand = c(0.01, 0.01)
-  )+
-  theme(panel.spacing.x = unit(4, "mm")) +
-  theme(axis.text.x = element_text(
-    hjust = c(
-      0,
-      rep(0.5, length(cutoff_dates) - 2),
-      0.5
+  scale_y_continuous(breaks = seq(0, 10, 0.5), position = "right") +
+  coord_cartesian(ylim = c(0, 2.5), clip = "off") +
+  labs(
+    x = "",
+    fill = "Infector",
+    y = expression(R["e"]),
+    color = expression(paste("Group level ", R["e"]))
+  ) +
+  theme_noso(date = TRUE)
+
+p_Rematrix +
+  theme(legend.position = "none")+
+  theme(
+    strip.background = element_rect(
+      colour = "black",
+      fill = "white",
+      size = 1,
+      linetype = "solid"
     )
-  ))
-p_Re
-
-
-p_Re2021 <- p_Re
-p_Re2020 <- p_Re
-
-legend <- cowplot::get_legend(p_Re2021)
-p_Re<- cowplot::plot_grid(p_Re2020 +
-                     theme(legend.position = "none") +
-                     theme(axis.text.y = element_blank(),
-                           axis.title.y = element_blank(),
-                           axis.ticks.y = element_blank()),
-                   p_Re2021 +
-                     theme(legend.position = "none")+
-                     theme(strip.text.y = element_blank()),
-                   ncol = 2,
-                   labels = "AUTO")
-
-p_Re_lgd <- cowplot::plot_grid(p_Re, legend, ncol = 1, rel_heights = c(1, 0.1))
-p_Re_lgd
+  )+
+  scale_x_date(
+    breaks = cutoff_breaks,
+    labels = day_month,
+    expand = c(0.01, 0.5),
+    limits = c(min(cutoff_breaks)-0.5, max(cutoff_breaks)+0.5)
+  )

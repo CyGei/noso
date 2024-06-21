@@ -1,14 +1,25 @@
 #######################################################
-# Load libraries, data and draw_* functions
+# Load libraries, helpers, data and draw_* functions
 #######################################################
 load_libraries <- function() {
   # Load libraries
   if (!require("pacman")) {
     install.packages("pacman")
   }
-  pacman::p_load(here, outbreaker2, tidyverse, purrr, furrr, reshape2, cowplot)
+  pacman::p_load(here,
+                 outbreaker2,
+                 tidyverse,
+                 dplyr,
+                 purrr,
+                 furrr,
+                 reshape2,
+                 cowplot,
+                 conflicted)
+  conflicted::conflict_prefer("filter", "dplyr")
   pacman::p_load_gh("CyGei/linktree")
 }
+load_libraries()
+
 
 load_data <- function(paper) {
   linelist <- readRDS(here("data", paper, "input/linelist.rds"))
@@ -50,12 +61,66 @@ load_data <- function(paper) {
     envir = .GlobalEnv
   )
 }
+load_paper <- function() {
+  # Select paper
+  papers <- c("JHI2021", "eLife2022")
+  idx <- utils::menu(papers, title = "Select paper")
+  paper <- papers[idx]
+  # Load data
+  load_data(paper)
+  assign("paper", paper, envir = .GlobalEnv)
+  output_path <- here::here("data", paper, "output")
+  if (!dir.exists(output_path)) {
+    dir.create(output_path, recursive = TRUE)
+  }
+  assign("output_path", output_path, envir = .GlobalEnv)
+  message("Selected paper: ", paper)
+  message("Output Path: ", output_path)
+}
 
 load_draw_functions <- function() {
   # Load draw_* functions
   source(here::here("scripts", "draw_functions.R"))
 }
 load_draw_functions()
+
+load_helpers <- function(custom_path = NULL) {
+  # Load the default helper script
+  default_path <- here::here("scripts", "helpers.R")
+  if (file.exists(default_path)) {
+    source(default_path)
+    message("Loaded default helper script: ", default_path)
+  } else {
+    warning("Default helper script not found: ", default_path)
+  }
+
+  # Try to load helper script from the current file's directory
+  tryCatch({
+    if (rstudioapi::isAvailable()) {
+      current_file <- rstudioapi::getActiveDocumentContext()$path
+      if (length(current_file) > 0 && current_file != "") {
+        current_dir <- dirname(current_file)
+        local_helper <- file.path(current_dir, "helpers.R")
+        if (file.exists(local_helper)) {
+          source(local_helper)
+          message("Loaded local helper script: ", local_helper)
+        }
+      }
+    }
+  }, error = function(e) {
+    message("Note: Unable to check for local helper script. RStudio may not be running.")
+  })
+
+  # Load custom path if provided
+  if (!is.null(custom_path)) {
+    if (file.exists(custom_path)) {
+      source(custom_path)
+      message("Loaded custom helper script: ", custom_path)
+    } else {
+      warning("Custom helper script not found: ", custom_path)
+    }
+  }
+}
 
 #######################################################
 # outbreaker2 output processing
@@ -151,7 +216,11 @@ filter_alpha_by_kappa <- function(out, kappa_threshold) {
 #' get_trees(out, ids = ids, group = group, dates = dates)
 #' }
 #'
-get_trees <- function(out, ids, kappa = FALSE, t_inf = FALSE, ...) {
+get_trees <- function(out,
+                      ids,
+                      kappa = FALSE,
+                      t_inf = FALSE,
+                      ...) {
   # Check inputs
   stopifnot(is.data.frame(out))
   args <- list(...)
@@ -239,7 +308,9 @@ pi_formula <- function(gamma, f) {
   return(numerator / denominator)
 }
 
-# GGPLOT ------------------------------------------------------------------
+#######################################################
+# ggplot2 functions
+#######################################################
 
 theme_noso <- function(day_break = 2,
                        fill = TRUE,
@@ -268,7 +339,12 @@ theme_noso <- function(day_break = 2,
       panel.grid.minor = element_line(linewidth = 0.075, color = "grey"),
       axis.line = element_line(linewidth = 0.6, color = "black"),
       legend.position = legend_position,
-      text = element_text(size = 12)
+      text = element_text(size = 12),
+      legend.background = element_rect(color = "black"),
+      legend.key = element_blank(),
+      legend.key.size = unit(0.5, "cm"),
+      legend.text = element_text(size = 11),
+      legend.margin = margin(0.1, 0.1, 0.1, 0, "cm")
     ),
     if (fill) {
       scale_fill_manual(
@@ -334,9 +410,7 @@ epicurve <- function(day_break = 2,
       ),
       col = "black",
       linewidth = 1.75,
-      linejoin = 'mitre',
-      lineend = 'square',
-      arrow = arrow(length = unit(0.25, 'cm'), type = 'closed')
+      arrow = arrow(length = unit(0.1, "inches"), type = "closed")
     ) +
     geom_segment(
       data = peaks,
@@ -350,9 +424,7 @@ epicurve <- function(day_break = 2,
       ),
       show.legend = FALSE,
       linewidth = 0.5,
-      linejoin = 'mitre',
-      lineend = 'square',
-      arrow = arrow(length = unit(0.25, 'cm'), type = 'closed')
+      arrow = arrow(length = unit(0.1, "inches"), type = "closed")
     ) +
     scale_y_continuous(breaks = seq(0, 50, by = 2)) +
     labs(
@@ -363,16 +435,8 @@ epicurve <- function(day_break = 2,
       linetype = ""
     ) +
     theme_noso(day_break) +
-    theme(
-      legend.position = legend_position,
-      legend.background = element_rect(color = "black"),
-      legend.key=element_blank(),
-      legend.key.size = unit(0.5, "cm"),
-      legend.margin = margin(0.1, 0.1, 0.1, 0, "cm"),
-    ) +
     guides(fill = guide_legend(override.aes = list(size = 0.25)),
-           linetype = guide_legend(override.aes = list(linewidth = 0.2,
-                                                       size = 0.1)))
+           linetype = guide_legend(override.aes = list(linewidth = 0.01, size = 0.05)))
 
   if (facet) {
     gg <- gg +
@@ -397,4 +461,26 @@ epicurve <- function(day_break = 2,
   }
 
   return(gg)
+}
+
+
+
+# nice looking arrow as legend for peak
+peak_legend <- function() {
+  pacman::p_load(ggplot2)
+  p <- ggplot() +
+    geom_segment(
+      aes(
+        x = "A",
+        xend = "A",
+        y = 0,
+        yend = 15,
+        linetype = "Peak"
+      ),
+      arrow = arrow(length = unit(0.25, 'cm'), type = 'closed'),
+      size = 0.7,
+    ) +
+    labs(linetype = "") +
+    theme_noso(date = FALSE)
+  cowplot::get_plot_component(p, 'guide-box-bottom', return_all = TRUE)
 }

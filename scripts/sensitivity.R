@@ -1,11 +1,8 @@
-source(here::here("scripts", "helpers.R"))
-load_libraries()
-paper <- c("JHI2021", "eLife2022")[2] #chose which paper to run
-load_data(paper)
-output_path <- here::here("data", paper, "output")
-
+load_helpers()
+load_paper()
 epicurve()
-plan(multisession, workers = availableCores())
+
+future::plan(future::multisession, workers = future::availableCores() - 1)
 trees <- furrr::future_map(seq_along(cutoff_dates), function(x) {
   linelist_cut <- linelist %>%
     filter(onset <= cutoff_dates[x])
@@ -17,14 +14,15 @@ trees <- furrr::future_map(seq_along(cutoff_dates), function(x) {
     get_trees(
       ids = linelist_cut$case_id,
       group = linelist_cut$group,
-      date = linelist_cut$onset
-    )
+      date = linelist_cut$onset,
+      kappa = TRUE
+    ) %>%
+    map( ~ .x %>% filter(kappa == 1))
 })
 
 
 # Sensitivity in fHCW --------------------------------------------------------------------
 f_seq <- seq(0.1, 0.9, 0.1)
-pacman::p_load(furrr)
 future::plan(future::multisession, workers = length(f_seq))
 set.seed(123)
 df_sensitivity <- furrr::future_map(f_seq, function(fHCW) {
@@ -78,16 +76,25 @@ df_sensitivity <- readRDS(here::here(output_path, "df_sensitivity.rds"))
 
 
 # Plot --------------------------------------------------------------------
-cutoff_breaks <- cutoff_dates[seq(1, length(cutoff_dates), 4)]
-day_month <- format(cutoff_breaks, "%d\n%B")
-day <- format(cutoff_breaks, "%d")
-dup <- which(duplicated(format(cutoff_breaks, "%b")))
-day_month[dup] <- day[dup]
-day_month[1] <- "11 \n    March"
-day_month[12] <- "06 \nMay    "
+if (paper == "eLife2022") {
+  cutoff_breaks <- cutoff_dates[seq(1, length(cutoff_dates), 4)]
+  day_month <- format(cutoff_breaks, "%d\n%B")
+  day <- format(cutoff_breaks, "%d")
+  dup <- which(duplicated(format(cutoff_breaks, "%b")))
+  day_month[dup] <- day[dup]
+  day_month[1] <- "11 \n    March"
+  day_month[12] <- "06 \nMay    "
 
+} else{
+  cutoff_breaks <- seq(cutoff_dates[2], max(linelist$onset), by = 2)
+  cutoff_breaks <- unique(c(cutoff_breaks, max(linelist$onset)))
+  day_month <- format(cutoff_breaks, "%d\n%B")
+  day <- format(cutoff_breaks, "%d")
+  dup <- which(duplicated(format(cutoff_breaks, "%b")))
+  day_month[dup] <- day[dup]
+}
 
-bind_rows(df_sensitivity) %>%
+p_sens <- bind_rows(df_sensitivity) %>%
   mutate(
     fHCW = str_extract(f, "(?<=HCW:)[0-9.]+") %>% as.numeric(),
     fPatient = str_extract(f, "(?<=patient:)[0-9.]+") %>% as.numeric(),
@@ -110,14 +117,24 @@ bind_rows(df_sensitivity) %>%
     col = level,
     group = interaction(cutoff, level, f)
   )) +
-  facet_wrap(~ f_label) +
-  geom_vline(
-    data = get_peak(date = linelist$onset, group = linelist$group),
-    aes(xintercept = observed_peak,
-        col = group),
-    linetype = "dotted",
-    show.legend = FALSE,
-    linewidth = 0.65
+  facet_wrap( ~ f_label) +
+  geom_rect(
+    data =
+      inner_join(
+        bind_rows(df_sensitivity),
+        get_peak(linelist$onset, group = linelist$group),
+        by = c("level" = "group", "cutoff_date" =  "observed_peak")
+      ),
+    aes(
+      fill = level,
+      xmin = cutoff_date - 0.5,
+      xmax = cutoff_date + 0.5,
+      ymin = -10,
+      ymax = 10,
+    ),
+    col = NA,
+    alpha = 0.04,
+    show.legend = FALSE
   ) +
   geom_errorbar(position = position_dodge(width = 0.5),
                 width = 0.5,
@@ -132,11 +149,12 @@ bind_rows(df_sensitivity) %>%
   geom_hline(aes(yintercept = 0), linetype = "dashed") +
   scale_shape_manual(values =
                        c("significant" = 16, "not significant" = 21)) +
-  theme_noso() +
+  theme_noso(date = FALSE) +
   labs(x = "",
        y = "",
        col = "",
        shape = "") +
+  coord_cartesian(ylim = c(-1, 1)) +
   theme(
     strip.background = element_rect(
       colour = "black",
@@ -150,17 +168,41 @@ bind_rows(df_sensitivity) %>%
       face = "bold",
       size = 12,
       margin = margin(2, 0, .1, 0, "pt")
-    ),
-    legend.margin = margin(-10, 0, 0, 0, "pt")
-  )+
-  scale_x_date(
-    # break 1 every other 2 cutoff_date
-    breaks = cutoff_breaks,
-    labels = day_month,
-    expand = c(0.01, 0.5)
+    )
   )
 
-
+p_sens <- p_sens +
+  #to add the peak legend:
+  ggnewscale::new_scale_fill() +
+  geom_rect(
+    data = tibble(
+      x = as.Date("1970-01-01"),
+      y = -Inf,
+      fill = "Peak"
+    ),
+    aes(
+      x = x,
+      y = y,
+      fill = fill,
+      group = fill,
+      xend = x,
+      yend = x,
+      xmin = x,
+      xmax = x,
+      ymax = x,
+      ymin = x
+    ),
+    alpha = 0.3,
+    col = NA
+  ) +
+  scale_fill_manual("", values = c("Peak" = "black")) +
+  scale_x_date(
+    breaks = cutoff_breaks,
+    labels = day_month,
+    expand = c(0.01, 0.5),
+    limits = c(min(cutoff_breaks)-0.5, max(cutoff_breaks)+0.5)
+  )
+p_sens
 # Sensitivity -------------------------------------------------------------
 #
 # # No uncertainty in Transmission Tree & uncertainty in delta --------------------------------------------------------------------
