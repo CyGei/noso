@@ -4,8 +4,8 @@ epicurve()
 out <- out[[length(out)]]
 # Total Introductions
 alpha_cols <- grep("alpha_", colnames(out))
-sum(is.na(out[sample(1:nrow(out), 1), alpha_cols]))
-
+fixed_imports <- sum(is.na(out[sample(1:nrow(out), 1), alpha_cols]))
+fixed_imports
 
 trees <- out %>%
   filter(step > 500) %>%
@@ -18,6 +18,24 @@ trees <- out %>%
     t_inf = TRUE
   )
 
+# Distribution of  imports per group
+total_imports <-
+  lapply(trees, function(tree) {
+  tree %>%
+    filter(is.na(from)) %>%
+    group_by(to_group) %>%
+    summarise(n_imports = n(), .groups = "drop")
+}) %>% bind_rows(.id = "tree") %>%
+  group_by(to_group) %>%
+  summarise(
+    mean = mean(n_imports),
+    lwr = quantile(n_imports, 0.025),
+    upr = quantile(n_imports, 0.975),
+    .groups = "drop"
+  )
+# as frequencies
+total_imports %>%
+  mutate(across(where(is.numeric), \(x) x /fixed_imports))
 
 # Estimate the average number of imports per time window ------------
 window <- ifelse(paper == "JHI2021", 5, 7)
@@ -49,7 +67,7 @@ imports_summary <- imports_df %>%
 
 
 p_imports <-
-imports_df %>%
+  imports_df %>%
   ggplot(aes(
     x = window_median,
     y = n_imports,
@@ -59,19 +77,23 @@ imports_df %>%
   geom_errorbarh(
     data = imports_summary %>%
       filter(to_group == "global"),
-    aes(xmin = window_start - 0.5,
-        xmax = window_end + 0.5,
-        y = mean,
-        height = 0),
+    aes(
+      xmin = window_start - 0.5,
+      xmax = window_end + 0.5,
+      y = mean,
+      height = 0
+    ),
     #size = 0.3,
     height = 0.1
   ) +
-  geom_violin(position = position_dodge(width = 3),
-              kernel = "rectangular",
-              adjust = 0.6,
-              alpha = 0.7,
-              col = NA,
-              scale = "width") +
+  geom_violin(
+    position = position_dodge(width = 3),
+    kernel = "rectangular",
+    adjust = 0.6,
+    alpha = 0.7,
+    col = NA,
+    scale = "width"
+  ) +
   geom_pointrange(
     data = imports_summary,
     aes(
@@ -100,17 +122,16 @@ imports_df %>%
     )
   ) +
   coord_cartesian(ylim = c(0, 6)) +
-  labs(x = "", y = "Importations",
-       fill = "")
+  labs(x = "", y = "Importations", fill = "")
 
 p_main <- cowplot::plot_grid(
   epicurve(day_break = window) + labs(x = "") + theme(legend.position = "none"),
   NULL,
   p_imports + theme(legend.position = "none"),
   ncol = 1,
-  rel_heights = c(1.5,-0.12, 2),
+  rel_heights = c(1.5, -0.12, 2),
   align = "v",
-  labels = c("A","", "B")
+  labels = c("A", "", "B")
 )
 p_legends <-
   cowplot::plot_grid(
@@ -121,12 +142,10 @@ p_legends <-
     rel_widths = c(1, -0.75, 1)
   )
 
-cowplot::plot_grid(
-  p_main,
-  p_legends,
-  nrow = 2,
-  rel_heights = c(1, 0.1)
-)
+cowplot::plot_grid(p_main,
+                   p_legends,
+                   nrow = 2,
+                   rel_heights = c(1, 0.1))
 
 
 

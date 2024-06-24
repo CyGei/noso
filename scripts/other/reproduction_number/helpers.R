@@ -93,3 +93,38 @@ process_window <- function(i, trees, cutoff_breaks, by_group = FALSE, as_matrix 
   result %>%
     mutate(window_start = window_start, window_end = window_end)
 }
+
+
+
+
+
+# Computes the Re ratios between groups:
+Re_matrix_ratios <- function(Re_summary) {
+  df <- Re_summary[Re_summary$to != "overall",]
+  unique_combos <- unique(df[c("from", "window_median")])
+
+  result <- data.frame(from = character(),
+                       window_median = as.Date(character()),
+                       ratio = numeric(),
+                       stringsAsFactors = FALSE)
+
+  for (i in 1:nrow(unique_combos)) {
+    from <- unique_combos$from[i]
+    date <- unique_combos$window_median[i]
+
+    subset <- df[df$from == from & df$window_median == date, ]
+
+    if (nrow(subset) == 2) {
+      numerator <- subset$mean[subset$to == from]
+      denominator <- subset$mean[subset$to != from]
+
+      ratio <- if (denominator != 0) numerator / denominator else NA
+
+      result <- rbind(result, data.frame(from = from,
+                                         window_median = date,
+                                         ratio = ratio))
+    }
+  }
+
+  return(result)
+}

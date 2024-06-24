@@ -155,3 +155,8 @@ p_Rematrix +
     expand = c(0.01, 0.5),
     limits = c(min(cutoff_breaks)-0.5, max(cutoff_breaks)+0.5)
   )
+
+Re_matrix_ratios(Re_summary = Re_summary) %>%
+  ggplot(aes(x = window_median, y = ratio, group = from)) +
+  geom_point()+
+  geom_line(aes(color = from), size = 1)
