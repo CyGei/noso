@@ -23,8 +23,10 @@ trees <- furrr::future_map(seq_along(cutoff_dates), function(x) {
 
 grouped_kappa_df <- furrr::future_map(seq_along(trees), function(i) {
   trees <- trees[[i]]
-  tab <- expand_grid(from_group = unique(linelist$group),
-                     to_group = unique(linelist$group))
+  tab <- expand_grid(
+    from_group = unique(linelist$group),
+    to_group = unique(linelist$group)
+  )
 
   data <- map(trees, ~ {
     g_kappa <- .x %>%
@@ -37,8 +39,10 @@ grouped_kappa_df <- furrr::future_map(seq_along(trees), function(i) {
       group_by(from_group) %>%
       mutate(total_from = sum(n)) %>%
       group_by(from_group, to_group) %>%
-      summarise(prop_kappa_over1 = sum(n[kappa > 1]) / first(total_from),
-                .groups = "drop")
+      summarise(
+        prop_kappa_over1 = sum(n[kappa > 1]) / first(total_from),
+        .groups = "drop"
+      )
     left_join(tab, g_kappa, by = c("from_group", "to_group"))
   }) %>% bind_rows(.id = "tree")
 
@@ -110,12 +114,14 @@ kappa_df <-
     bind_rows(overall_kappa_df, .id = "cutoff_date"),
     bind_rows(grouped_kappa_df, .id = "cutoff_date")
   ) %>%
-  mutate(cutoff_date = cutoff_dates[as.integer(cutoff_date)],
-         from_label = as.factor("from"), to_label = as.factor("to"),
-         to_group = factor(to_group, levels = c("overall", "hcw", "patient")))
+  mutate(
+    cutoff_date = cutoff_dates[as.integer(cutoff_date)],
+    from_label = as.factor("from"), to_label = as.factor("to"),
+    to_group = factor(to_group, levels = c("overall", "hcw", "patient"))
+  )
 
 kappa_df %>%
-ggplot(aes(x = cutoff_date, y = mean, color = from_group)) +
+  ggplot(aes(x = cutoff_date, y = mean, color = from_group)) +
   ggh4x::facet_nested(
     rows = vars(from_label, from_group),
     cols = vars(to_label, to_group),
@@ -123,10 +129,16 @@ ggplot(aes(x = cutoff_date, y = mean, color = from_group)) +
   ) +
   geom_point() +
   geom_errorbar(aes(ymin = lwr, ymax = upr)) +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
-                     limits = c(0, 1)) +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    limits = c(0, 1),
+    position = "right"
+  ) +
   theme_noso(day_break = 4) +
   labs(x = "", y = expression(paste(
     "Proportion of indirect transmissions: ", kappa > 1
   ))) +
-  theme(legend.position = "none")
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = NA)
+  )
