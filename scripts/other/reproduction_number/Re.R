@@ -84,7 +84,7 @@ p_Re <- Re_df %>%
   ) +
   scale_y_continuous(breaks = seq(0, 10, 0.5)) +
   theme_noso(day_break = window, date = TRUE) +
-  coord_cartesian(ylim = c(0, 3.5)) +
+  coord_cartesian(ylim = c(0, 3)) +
   scale_fill_manual(
     values = c(
       Global = "#767676",
@@ -97,7 +97,9 @@ p_Re <- Re_df %>%
       "patient" = "Patient"
     )
   ) +
-  labs(x = "", y = expression(R["e"]), fill = "")
+  labs(x = "", y = expression(R[t] ^ {
+    case
+  }), fill = "")
 
 p_main <-
   cowplot::plot_grid(
@@ -115,16 +117,34 @@ p_main <-
 #add legends
 p_legends <-
   cowplot::plot_grid(
-  peak_legend(),
-  NULL,
-  cowplot::get_plot_component(p_Re, 'guide-box-bottom', return_all = TRUE),
-  nrow = 1,
-  rel_widths = c(1, -0.75, 1)
-)
+    peak_legend(),
+    NULL,
+    cowplot::get_plot_component(p_Re, 'guide-box-bottom', return_all = TRUE),
+    nrow = 1,
+    rel_widths = c(1, -0.75, 1)
+  )
+
+cowplot::plot_grid(p_main,
+                   p_legends,
+                   nrow = 2,
+                   rel_heights = c(1, 0.1))
+
+
+#RUN RE_MATRIX script
 
 cowplot::plot_grid(
-  p_main,
-  p_legends,
-  nrow = 2,
-  rel_heights = c(1, 0.1)
+  p_Re+theme(legend.position = "none"),
+  NULL,
+  p_Rematrix,
+  cowplot::get_plot_component(p_Re, 'guide-box-bottom', return_all = TRUE),
+  ncol = 1,
+  rel_heights = c(0.55, -0.075, 1, 0.12),
+  align = "v",
+  labels = c("A", "", "B")
 )
+
+ggsave("figs/Re2.png",
+       width = 9,
+       height = 6,
+       units = "in",
+       dpi = 400)

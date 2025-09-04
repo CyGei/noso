@@ -197,3 +197,10 @@ p_metrics +
     col = NA
   ) +
   scale_fill_manual("", values = c("Peak" = "black"))
+
+ggsave(
+  "figs/metrics2.png",
+  width = 8,
+  height = 5,
+  dpi = 300
+)

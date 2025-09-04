@@ -66,18 +66,48 @@ chisq <- furrr::future_map(seq_along(cutoff_dates), function(i) {
 # Plot --------------------------------------------------------------------
 
 p_chisq <- ggplot(chisq, aes(x = cutoff_date, y = p_value)) +
-  geom_point(size = 3,
-             fill = "black") +
+  geom_point(size = 3, fill = "black") +
   geom_hline(yintercept = 0.05, linetype = "dashed") +
-  scale_y_log10() +
+  scale_y_log10(
+    breaks = c(1e-04, 1e-03, 0.05, 1e+00),
+    # Set the breaks at 1e-04, 0.05, and 1e+00
+    labels = c(
+      expression(10 ^ -4),
+      expression(10 ^ -3),
+      "0.05",
+      expression(10 ^ 0)
+    )  # Custom labels if needed
+  ) +
   labs(x = "", y =  paste0("\u03C7\u00B2", " p-value")) +
   theme_noso(day_break = 2)
 
+epic <-
+  epicurve() +
+  theme(
+    legend.position = c(0.8, 0.8),
+    legend.key.size = unit(0.4, "cm"),                  # Reduce the size of the legend keys
+    legend.margin = margin(t = 0, r = 1, b = 0, l = 1),
+    legend.spacing.y = unit(0, "cm")
+  ) +
+  labs(x = "")+
+  guides(fill = guide_legend(title = NULL),
+         color = guide_legend(title = NULL),
+         linetype = guide_legend(title = NULL))
 
-cowplot::plot_grid(epicurve() + theme(legend.position = "none") + labs(x = ""),
-                   NULL,
-                   p_chisq + labs(x = "Onset"),
-                   ncol = 1,
-                   align = "v",
-                   rel_heights = c(1,-0.06, 1),
-                   labels = c("A","", "B"))
+cowplot::plot_grid(
+  epic,
+  NULL,
+  p_chisq + labs(x = "Onset"),
+  ncol = 1,
+  align = "v",
+  rel_heights = c(1, -0.06, 0.45),
+  labels = c("A", "", "B"),
+  label_x = c(0, NA, 0),
+  label_y = c(1, NA, 1.25)
+)
+ggsave(
+  filename = "figs/chisq2.png",
+  width = 8,
+  height = 4.5,
+  dpi = 500
+)

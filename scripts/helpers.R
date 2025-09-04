@@ -311,6 +311,7 @@ pi_formula <- function(gamma, f) {
 #######################################################
 # ggplot2 functions
 #######################################################
+imperial_grey <- grDevices::rgb(235 / 256, 238 / 256, 238 / 256)
 
 theme_noso <- function(day_break = 2,
                        fill = TRUE,
@@ -321,30 +322,35 @@ theme_noso <- function(day_break = 2,
     theme(
       strip.background = element_rect(
         colour = "black",
-        fill = "#EEEEEE",
-        linewidth = 1.2
+        fill = NA,
+        linewidth = 0.5
       ),
       strip.text = element_text(
         size = 14,
         colour = "black",
         face = "bold"
       ),
-      panel.border = element_rect(
-        colour = "black",
-        fill = NA,
-        size = 0.5
-      ),
+      panel.border = element_rect(color = "black",fill = NA, size = 0.25),
+      axis.line = element_line(color = "black", linewidth = 0.5),
       panel.background = element_rect(fill = "white"),
-      panel.grid.major = element_line(linewidth = 0.3, color = "grey"),
-      panel.grid.minor = element_line(linewidth = 0.075, color = "grey"),
-      axis.line = element_line(linewidth = 0.6, color = "black"),
+      panel.grid.major = element_line(colour = imperial_grey, linewidth = 0.3),
+      panel.grid.minor = element_line(colour = imperial_grey, linewidth = 0.3),
       legend.position = legend_position,
-      text = element_text(size = 12),
-      legend.background = element_rect(color = "black"),
+      text = element_text(size = 14),
+      axis.title = element_text(size = 14), # hjust = 0.95
+      legend.title = element_text(size = 15, face = "bold"),
+      legend.text = element_text(size = 13),
+      strip.text.x = element_text(size = 15, face = "bold"),
       legend.key = element_blank(),
-      legend.key.size = unit(0.5, "cm"),
-      legend.text = element_text(size = 11),
-      legend.margin = margin(0.1, 0.1, 0.1, 0, "cm")
+      #legend.key.size = unit(0.5, "cm"),
+      legend.margin = margin(0.1, 0.1, 0.1, 0, "cm"),
+      legend.box.margin = margin(t = -10),
+      legend.background = element_rect(
+        colour = "#7e7e83",
+        linewidth = 0.4,
+        fill = "white",
+        linetype = "solid"
+      ),
     ),
     if (fill) {
       scale_fill_manual(

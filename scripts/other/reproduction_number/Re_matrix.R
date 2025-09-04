@@ -118,7 +118,7 @@ p_Rematrix <- Re_df %>%
     col = NA,
     adjust = 1.8,
     position = position_dodge(width = 4),
-    alpha = 0.5,
+    alpha = 0.7,
     linewidth = 0.1
   ) +
   geom_pointrange(data = Re_summary,
@@ -134,29 +134,16 @@ p_Rematrix <- Re_df %>%
   labs(
     x = "",
     fill = "Infector",
-    y = expression(R["e"]),
+    y =expression(R[t]^{case}),
     color = expression(paste("Group level ", R["e"]))
   ) +
   theme_noso(date = TRUE)
 
-p_Rematrix +
+p_Rematrix <- p_Rematrix +
   theme(legend.position = "none")+
-  theme(
-    strip.background = element_rect(
-      colour = "black",
-      fill = "white",
-      size = 1,
-      linetype = "solid"
-    )
-  )+
   scale_x_date(
     breaks = cutoff_breaks,
     labels = day_month,
     expand = c(0.01, 0.5),
     limits = c(min(cutoff_breaks)-0.5, max(cutoff_breaks)+0.5)
   )
-
-Re_matrix_ratios(Re_summary = Re_summary) %>%
-  ggplot(aes(x = window_median, y = ratio, group = from)) +
-  geom_point()+
-  geom_line(aes(color = from), size = 1)

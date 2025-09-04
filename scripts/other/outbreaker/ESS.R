@@ -47,3 +47,31 @@ get_thinning_interval(500000, 1000)
 # Conclusion
 #total_iter = 500000 = 5e5
 #thin = 500
+
+
+
+#####################
+# Convergence diagnostics
+######################
+library(coda)
+# read all runs:
+all_chains <- bind_rows(out, .id = "time_step") %>%
+  mutate(time_step = factor(time_step, levels = seq_along(cutoff_dates)))
+
+all_chains %>%
+  ggplot(aes(x = step, y = post, colour = time_step)) +
+  geom_line() +
+  scale_colour_viridis_d()
+
+params <- c("mu", "pi", "eps")
+# Split into a list by chain (i.e., by time_step)
+chain_list <- all_chains %>%
+  select(time_step, step, all_of(params)) %>%
+  group_split(time_step) %>%
+  lapply(function(df) {
+    mcmc(df %>% filter(step>500) %>% select(all_of(params)))
+  })
+
+# Convert to mcmc.list object
+mcmc_list <- mcmc.list(chain_list)
+gelman.diag(mcmc_list, autoburnin = FALSE)
